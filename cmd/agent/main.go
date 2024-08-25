@@ -459,7 +459,7 @@ func doSelfUpdate(useLocalVersion bool) {
 	if monitor.CachedCountryCode != "cn" && !agentCliParam.UseGiteeToUpgrade {
 		latest, err = selfupdate.UpdateSelf(v, "xos/serveragent")
 	} else {
-		latest, err = selfupdate.UpdateSelfGitee(v, "naibahq/agent")
+		latest, err = selfupdate.UpdateSelfGitee(v, "xos/serveragent")
 	}
 	if err != nil {
 		printf("更新失败: %v", err)
