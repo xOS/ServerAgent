@@ -1,6 +1,6 @@
 module github.com/xos/serveragent
 
-go 1.21
+go 1.20
 
 require (
 	github.com/AlecAivazis/survey/v2 v2.3.7
@@ -15,7 +15,6 @@ require (
 	github.com/iamacarpet/go-winpty v1.0.4
 	github.com/jaypipes/ghw v0.12.0
 	github.com/json-iterator/go v1.1.12
-	github.com/xos/serveragent v0.4.11
 	github.com/nezhahq/go-github-selfupdate v0.0.0-20240713123605-d560a87d03a0
 	github.com/nezhahq/service v0.0.0-20240704142721-eba37f9cc709
 	github.com/quic-go/quic-go v0.42.0
@@ -62,6 +61,7 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/power-devops/perfstat v0.0.0-20221212215047-62379fc7944b // indirect
 	github.com/quic-go/qpack v0.4.0 // indirect
+	github.com/quic-go/qtls-go1-20 v0.4.1 // indirect
 	github.com/sagikazarmark/locafero v0.4.0 // indirect
 	github.com/sagikazarmark/slog-shim v0.1.0 // indirect
 	github.com/shoenig/go-m1cpu v0.1.6 // indirect
