@@ -14,12 +14,12 @@ import (
 )
 
 type Task struct {
-	taskClient pb.NezhaService_IOStreamClient
+	taskClient pb.ServerService_IOStreamClient
 	printf     func(string, ...interface{})
 	remoteData *pb.IOStreamData
 }
 
-func NewFMClient(client pb.NezhaService_IOStreamClient, printFunc func(string, ...interface{})) *Task {
+func NewFMClient(client pb.ServerService_IOStreamClient, printFunc func(string, ...interface{})) *Task {
 	return &Task{
 		taskClient: client,
 		printf:     printFunc,
