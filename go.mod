@@ -2,8 +2,6 @@ module github.com/xos/serveragent
 
 go 1.21
 
-toolchain go1.23.0
-
 require (
 	github.com/AlecAivazis/survey/v2 v2.3.7
 	github.com/DaRealFreak/cloudflare-bp-go v1.0.4
