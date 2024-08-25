@@ -1,5 +1,5 @@
 .DS_Store
-/agent
-/cmd/agent/agent
+/server-agent
+/cmd/agent/server-agent
 *.pprof
 dist
