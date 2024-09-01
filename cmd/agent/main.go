@@ -36,6 +36,7 @@ import (
 	"github.com/xos/serveragent/pkg/processgroup"
 	"github.com/xos/serveragent/pkg/pty"
 	"github.com/xos/serveragent/pkg/util"
+	utlsx "github.com/xos/serveragent/pkg/utls"
 	pb "github.com/xos/serveragent/proto"
 )
 
