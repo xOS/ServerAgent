@@ -17,13 +17,13 @@ import (
 	"strings"
 	"time"
 
-	bpc "github.com/DaRealFreak/cloudflare-bp-go"
 	"github.com/blang/semver"
 	"github.com/ebi-yade/altsvc-go"
 	"github.com/go-ping/ping"
 	"github.com/nezhahq/go-github-selfupdate/selfupdate"
 	"github.com/nezhahq/service"
 	"github.com/quic-go/quic-go/http3"
+	utls "github.com/refraction-networking/utls"
 	"github.com/shirou/gopsutil/v4/host"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
@@ -95,7 +95,6 @@ var (
 const (
 	delayWhenError = time.Second * 10 // Agent 重连间隔
 	networkTimeOut = time.Second * 5  // 普通网络超时
-	macOSChromeUA  = ""
 )
 
 func init() {
@@ -121,15 +120,12 @@ func init() {
 		return nil, err
 	}
 
+	headers := util.BrowserHeaders()
 	http.DefaultClient.Timeout = time.Second * 30
-	httpClient.Transport = bpc.AddCloudFlareByPass(httpClient.Transport, bpc.Options{
-		AddMissingHeaders: true,
-		Headers: map[string]string{
-			"Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
-			"Accept-Language": "en-US,en;q=0.5",
-			"User-Agent":      monitor.MacOSChromeUA,
-		},
-	})
+	httpClient.Transport = utlsx.NewUTLSHTTPRoundTripperWithProxy(
+		utls.HelloChrome_Auto, new(utls.Config),
+		http.DefaultTransport, nil, headers,
+	)
 
 	ex, err := os.Executable()
 	if err != nil {
@@ -307,7 +303,7 @@ func runService(action string, flags []string) {
 	}
 
 	svcConfig := &service.Config{
-		Name:             "nezha-agent",
+		Name:             "server-agent",
 		DisplayName:      "Server Agent",
 		Description:      "哪吒探针监控端",
 		Arguments:        flags,
@@ -725,7 +721,7 @@ func handleTerminalTask(task *pb.Task) {
 		if remoteData, err = remoteIO.Recv(); err != nil {
 			return
 		}
-		if remoteData.Data == nil || len(remoteData.Data) == 0 {
+		if len(remoteData.Data) == 0 {
 			return
 		}
 		switch remoteData.Data[0] {
@@ -838,7 +834,7 @@ func handleFMTask(task *pb.Task) {
 		if remoteData, err = remoteIO.Recv(); err != nil {
 			return
 		}
-		if remoteData.Data == nil || len(remoteData.Data) == 0 {
+		if len(remoteData.Data) == 0 {
 			return
 		}
 		fmc.DoTask(remoteData)
