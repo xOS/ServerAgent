@@ -138,7 +138,7 @@ func init() {
 	agentCmd.PersistentFlags().StringVarP(&agentCliParam.ClientSecret, "password", "p", "", "Agent连接Secret")
 	agentCmd.PersistentFlags().BoolVar(&agentCliParam.TLS, "tls", false, "启用SSL/TLS加密")
 	agentCmd.PersistentFlags().BoolVarP(&agentCliParam.InsecureTLS, "insecure", "k", false, "禁用证书检查")
-	agentCmd.PersistentFlags().BoolVarP(&agentConfig.Debug, "debug", "d", false, "开启调试信息")
+	agentCmd.PersistentFlags().BoolVarP(&agentConfig.Debug, "debug", "d", true, "开启调试信息")
 	agentCmd.PersistentFlags().IntVar(&agentCliParam.ReportDelay, "report-delay", 1, "系统状态上报间隔")
 	agentCmd.PersistentFlags().BoolVar(&agentCliParam.SkipConnectionCount, "skip-conn", false, "不监控连接数")
 	agentCmd.PersistentFlags().BoolVar(&agentCliParam.SkipProcsCount, "skip-procs", false, "不监控进程数")
@@ -150,7 +150,7 @@ func init() {
 	agentCmd.PersistentFlags().BoolVar(&agentConfig.Temperature, "temperature", false, "启用温度监控")
 	agentCmd.PersistentFlags().BoolVar(&agentCliParam.UseGiteeToUpgrade, "gitee", false, "使用Gitee获取更新")
 	agentCmd.PersistentFlags().Uint32VarP(&agentCliParam.IPReportPeriod, "ip-report-period", "u", 30*60, "本地IP更新间隔, 上报频率依旧取决于report-delay的值")
-	agentCmd.Flags().BoolVarP(&agentCliParam.Version, "version", "v", false, "查看当前版本号")
+	agentCmd.Flags().BoolVarP(&agentCliParam.Version, "version", "v", true, "查看当前版本号")
 
 	agentConfig.Read(filepath.Dir(ex) + "/config.yml")
 
@@ -306,7 +306,7 @@ func runService(action string, flags []string) {
 	svcConfig := &service.Config{
 		Name:             "server-agent",
 		DisplayName:      "Server Agent",
-		Description:      "哪吒探针监控端",
+		Description:      "服务器探针监控端",
 		Arguments:        flags,
 		WorkingDirectory: dir,
 		Option:           winConfig,
@@ -453,11 +453,8 @@ func doSelfUpdate(useLocalVersion bool) {
 	printf("检查更新: %v", v)
 	var latest *selfupdate.Release
 	var err error
-	if monitor.CachedCountryCode != "cn" && !agentCliParam.UseGiteeToUpgrade {
-		latest, err = selfupdate.UpdateSelf(v, "xos/serveragent")
-	} else {
-		latest, err = selfupdate.UpdateSelfGitee(v, "xos/serveragent")
-	}
+	// 检查更新
+	latest, err = selfupdate.UpdateSelf(v, "xos/serveragent")
 	if err != nil {
 		printf("更新失败: %v", err)
 		return
