@@ -150,7 +150,7 @@ func init() {
 	agentCmd.PersistentFlags().BoolVar(&agentConfig.Temperature, "temperature", false, "启用温度监控")
 	agentCmd.PersistentFlags().BoolVar(&agentCliParam.UseGiteeToUpgrade, "gitee", false, "使用Gitee获取更新")
 	agentCmd.PersistentFlags().Uint32VarP(&agentCliParam.IPReportPeriod, "ip-report-period", "u", 30*60, "本地IP更新间隔, 上报频率依旧取决于report-delay的值")
-	agentCmd.Flags().BoolVarP(&agentCliParam.Version, "version", "v", true, "查看当前版本号")
+	agentCmd.Flags().BoolVarP(&agentCliParam.Version, "version", "v", false, "查看当前版本号")
 
 	agentConfig.Read(filepath.Dir(ex) + "/config.yml")
 
