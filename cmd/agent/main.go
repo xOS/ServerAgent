@@ -453,8 +453,11 @@ func doSelfUpdate(useLocalVersion bool) {
 	printf("检查更新: %v", v)
 	var latest *selfupdate.Release
 	var err error
-	// 检查更新
-	latest, err = selfupdate.UpdateSelf(v, "xos/serveragent")
+	if monitor.CachedCountryCode != "cn" && !agentCliParam.UseGiteeToUpgrade {
+		latest, err = selfupdate.UpdateSelf(v, "xos/serveragent")
+	} else {
+		latest, err = selfupdate.UpdateSelfGitee(v, "ten/serveragent")
+	}
 	if err != nil {
 		printf("更新失败: %v", err)
 		return
