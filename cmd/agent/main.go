@@ -226,10 +226,10 @@ func run() {
 
 	// 定时检查更新
 	if _, err := semver.Parse(version); err == nil && !agentCliParam.DisableAutoUpdate {
-		doSelfUpdate(true)
+		doSelfUpdate(!agentCliParam.DisableAutoUpdate)
 		go func() {
 			for range time.Tick(20 * time.Minute) {
-				doSelfUpdate(true)
+				doSelfUpdate(!agentCliParam.DisableAutoUpdate)
 			}
 		}()
 	}
@@ -446,7 +446,7 @@ func reportState(lastReportHostInfo time.Time) time.Time {
 
 // doSelfUpdate 执行更新检查 如果更新成功则会结束进程
 func doSelfUpdate(useLocalVersion bool) {
-	v := semver.MustParse("0.1.0")
+	v := semver.MustParse("0.17.0")
 	if useLocalVersion {
 		v = semver.MustParse(version)
 	}
@@ -472,7 +472,7 @@ func handleUpgradeTask(*pb.Task, *pb.TaskResult) {
 	if agentCliParam.DisableForceUpdate {
 		return
 	}
-	doSelfUpdate(false)
+	doSelfUpdate(!agentCliParam.DisableForceUpdate)
 }
 
 func handleTcpPingTask(task *pb.Task, result *pb.TaskResult) {
