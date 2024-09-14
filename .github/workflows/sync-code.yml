@@ -2,7 +2,7 @@ name: Sync Code to Gitee
 
 on:
   push:
-    branches: [main]
+    branches: [master]
 
 jobs:
   sync-code-to-gitee:
@@ -12,5 +12,5 @@ jobs:
       - uses: adambirds/sync-github-to-gitlab-action@v1.1.0
         with:
           destination_repository: git@gitee.com:ten/serveragent.git
-          destination_branch_name: main
+          destination_branch_name: master
           destination_ssh_key: ${{ secrets.GITEE_SSH_KEY }}

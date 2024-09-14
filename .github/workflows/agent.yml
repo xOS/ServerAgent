@@ -38,5 +38,5 @@ jobs:
             owner: 'xos',
             repo: 'serveragent',
             workflow_id: 'sync-release.yml',
-            ref: 'main'
+            ref: 'master'
             })
