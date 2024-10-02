@@ -2,7 +2,7 @@ package model
 
 const (
 	_ = iota
-	TaskTypeHTTPGet
+
 	TaskTypeICMPPing
 	TaskTypeTCPPing
 	TaskTypeCommand

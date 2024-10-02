@@ -3,13 +3,10 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,10 +15,9 @@ import (
 	"time"
 
 	"github.com/blang/semver"
-	"github.com/ebi-yade/altsvc-go"
-	"github.com/go-ping/ping"
 	"github.com/nezhahq/go-github-selfupdate/selfupdate"
 	"github.com/nezhahq/service"
+	ping "github.com/prometheus-community/pro-bing"
 	"github.com/quic-go/quic-go/http3"
 	utls "github.com/refraction-networking/utls"
 	"github.com/shirou/gopsutil/v4/host"
@@ -376,8 +372,6 @@ func doTask(task *pb.Task) {
 	result.Id = task.GetId()
 	result.Type = task.GetType()
 	switch task.GetType() {
-	case model.TaskTypeHTTPGet:
-		handleHttpGetTask(task, &result)
 	case model.TaskTypeICMPPing:
 		handleIcmpPingTask(task, &result)
 	case model.TaskTypeTCPPing:
@@ -446,7 +440,7 @@ func reportState(lastReportHostInfo time.Time) time.Time {
 
 // doSelfUpdate 执行更新检查 如果更新成功则会结束进程
 func doSelfUpdate(useLocalVersion bool) {
-	v := semver.MustParse("0.1.0")
+	v := semver.MustParse("0.4.23")
 	if useLocalVersion {
 		v = semver.MustParse(version)
 	}
@@ -462,6 +456,10 @@ func doSelfUpdate(useLocalVersion bool) {
 		printf("更新失败: %v", err)
 		return
 	}
+
+	// 添加调试信息
+	printf("当前版本: %v, 最新版本: %v", v, latest.Version)
+
 	if !latest.Version.Equals(v) {
 		printf("已经更新至: %v, 正在结束进程", latest.Version)
 		os.Exit(1)
@@ -489,15 +487,15 @@ func handleTcpPingTask(task *pb.Task, result *pb.TaskResult) {
 	if strings.Contains(ipAddr, ":") {
 		ipAddr = fmt.Sprintf("[%s]", ipAddr)
 	}
+	printf("TCP-Ping Task: Pinging %s:%s", ipAddr, port)
 	start := time.Now()
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%s", ipAddr, port), time.Second*10)
-	if err == nil {
-		conn.Write([]byte("ping\n"))
-		conn.Close()
-		result.Delay = float32(time.Since(start).Microseconds()) / 1000.0
-		result.Successful = true
-	} else {
+	if err != nil {
 		result.Data = err.Error()
+	} else {
+		conn.Close()
+		result.Delay = float32(time.Since(start).Milliseconds())
+		result.Successful = true
 	}
 }
 
@@ -507,6 +505,7 @@ func handleIcmpPingTask(task *pb.Task, result *pb.TaskResult) {
 		result.Data = err.Error()
 		return
 	}
+	printf("ICMP-Ping Task: Pinging %s", ipAddr)
 	pinger, err := ping.NewPinger(ipAddr)
 	if err == nil {
 		pinger.SetPrivileged(true)
@@ -525,95 +524,6 @@ func handleIcmpPingTask(task *pb.Task, result *pb.TaskResult) {
 	} else {
 		result.Data = err.Error()
 	}
-}
-
-func handleHttpGetTask(task *pb.Task, result *pb.TaskResult) {
-	start := time.Now()
-	taskUrl := task.GetData()
-	resp, err := httpClient.Get(taskUrl)
-	checkHttpResp(taskUrl, start, resp, err, result)
-}
-
-func checkHttpResp(taskUrl string, start time.Time, resp *http.Response, err error, result *pb.TaskResult) {
-	if err == nil {
-		defer resp.Body.Close()
-		_, err = io.Copy(io.Discard, resp.Body)
-	}
-	if err == nil {
-		// 检查 HTTP Response 状态
-		result.Delay = float32(time.Since(start).Microseconds()) / 1000.0
-		if resp.StatusCode > 399 || resp.StatusCode < 200 {
-			err = errors.New("\n应用错误：" + resp.Status)
-		}
-	}
-	if err == nil {
-		// 检查 SSL 证书信息
-		if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
-			c := resp.TLS.PeerCertificates[0]
-			result.Data = c.Issuer.CommonName + "|" + c.NotAfter.String()
-		}
-		altSvc := resp.Header.Get("Alt-Svc")
-		if altSvc != "" {
-			checkAltSvc(start, altSvc, taskUrl, result)
-		} else {
-			result.Successful = true
-		}
-	} else {
-		// HTTP 请求失败
-		result.Data = err.Error()
-	}
-}
-
-func checkAltSvc(start time.Time, altSvcStr string, taskUrl string, result *pb.TaskResult) {
-	altSvcList, err := altsvc.Parse(altSvcStr)
-	if err != nil {
-		result.Data = err.Error()
-		result.Successful = false
-		return
-	}
-
-	parsedUrl, _ := url.Parse(taskUrl)
-	originalHost := parsedUrl.Hostname()
-	originalPort := parsedUrl.Port()
-	if originalPort == "" {
-		switch parsedUrl.Scheme {
-		case "http":
-			originalPort = "80"
-		case "https":
-			originalPort = "443"
-		}
-	}
-
-	altAuthorityHost := ""
-	altAuthorityPort := ""
-	altAuthorityProtocol := ""
-	for _, altSvc := range altSvcList {
-		altAuthorityPort = altSvc.AltAuthority.Port
-		if altSvc.AltAuthority.Host != "" {
-			altAuthorityHost = altSvc.AltAuthority.Host
-			altAuthorityProtocol = altSvc.ProtocolID
-			break
-		}
-	}
-	if altAuthorityHost == "" {
-		altAuthorityHost = originalHost
-	}
-	if altAuthorityHost == originalHost && altAuthorityPort == originalPort {
-		result.Successful = true
-		return
-	}
-
-	altAuthorityUrl := "https://" + altAuthorityHost + ":" + altAuthorityPort + "/"
-	req, _ := http.NewRequest("GET", altAuthorityUrl, nil)
-	req.Host = originalHost
-
-	client := httpClient
-	if strings.HasPrefix(altAuthorityProtocol, "h3") {
-		client = httpClient3
-	}
-	resp, err := client.Do(req)
-
-	checkHttpResp(altAuthorityUrl, start, resp, err, result)
 }
 
 func handleCommandTask(task *pb.Task, result *pb.TaskResult) {
