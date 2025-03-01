@@ -458,7 +458,7 @@ func reportHost() bool {
 		}
 	}
 
-	return lastReportHostInfo
+	return true
 }
 
 // doSelfUpdate 执行更新检查 如果更新成功则会结束进程
