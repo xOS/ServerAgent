@@ -1,21 +1,24 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
-	"github.com/blang/semver"
-	"github.com/nezhahq/go-github-selfupdate/selfupdate"
+	"github.com/ebi-yade/altsvc-go"
 	"github.com/nezhahq/service"
 	ping "github.com/prometheus-community/pro-bing"
 	"github.com/quic-go/quic-go/http3"
@@ -25,6 +28,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/resolver"
 
 	"github.com/xos/serveragent/model"
 	fm "github.com/xos/serveragent/pkg/fm"
@@ -52,6 +56,8 @@ type AgentCliParam struct {
 	IPReportPeriod        uint32 // 上报IP间隔
 	UseIPv6CountryCode    bool   // 默认优先展示IPv6旗帜
 	UseGiteeToUpgrade     bool   // 强制从Gitee获取更新
+	DisableNat            bool   // 关闭内网穿透
+	DisableSendQuery      bool   // 关闭发送TCP/ICMP/HTTP请求
 }
 
 var (
@@ -59,7 +65,7 @@ var (
 	arch        string
 	client      pb.ServerServiceClient
 	initialized bool
-	resolver    = &net.Resolver{PreferGo: true}
+	dnsResolver = &net.Resolver{PreferGo: true}
 )
 
 var agentCmd = &cobra.Command{
@@ -87,6 +93,8 @@ var (
 		Timeout:   time.Second * 30,
 		Transport: &http3.RoundTripper{},
 	}
+
+	hostStatus = new(atomic.Bool)
 )
 
 const (
@@ -95,6 +103,7 @@ const (
 )
 
 func init() {
+	resolver.SetDefaultScheme("passthrough")
 	net.DefaultResolver.PreferGo = true // 使用 Go 内置的 DNS 解析器解析域名
 	net.DefaultResolver.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
 		d := net.Dialer{
@@ -121,7 +130,7 @@ func init() {
 	http.DefaultClient.Timeout = time.Second * 30
 	httpClient.Transport = utlsx.NewUTLSHTTPRoundTripperWithProxy(
 		utls.HelloChrome_Auto, new(utls.Config),
-		http.DefaultTransport, nil, headers,
+		http.DefaultTransport, nil, &headers,
 	)
 
 	ex, err := os.Executable()
@@ -139,6 +148,8 @@ func init() {
 	agentCmd.PersistentFlags().BoolVar(&agentCliParam.SkipConnectionCount, "skip-conn", false, "不监控连接数")
 	agentCmd.PersistentFlags().BoolVar(&agentCliParam.SkipProcsCount, "skip-procs", false, "不监控进程数")
 	agentCmd.PersistentFlags().BoolVar(&agentCliParam.DisableCommandExecute, "disable-command-execute", false, "禁止在此机器上执行命令")
+	agentCmd.PersistentFlags().BoolVar(&agentCliParam.DisableNat, "disable-nat", false, "禁止此机器内网穿透")
+	agentCmd.PersistentFlags().BoolVar(&agentCliParam.DisableSendQuery, "disable-send-query", false, "禁止此机器发送TCP/ICMP/HTTP请求")
 	agentCmd.PersistentFlags().BoolVar(&agentCliParam.DisableAutoUpdate, "disable-auto-update", false, "禁用自动升级")
 	agentCmd.PersistentFlags().BoolVar(&agentCliParam.DisableForceUpdate, "disable-force-update", false, "禁用强制升级")
 	agentCmd.PersistentFlags().BoolVar(&agentCliParam.UseIPv6CountryCode, "use-ipv6-countrycode", false, "使用IPv6的位置上报")
@@ -244,7 +255,6 @@ func run() {
 	}
 
 	for {
-		timeOutCtx, cancel := context.WithTimeout(context.Background(), networkTimeOut)
 		var securityOption grpc.DialOption
 		if agentCliParam.TLS {
 			if agentCliParam.InsecureTLS {
@@ -255,17 +265,15 @@ func run() {
 		} else {
 			securityOption = grpc.WithTransportCredentials(insecure.NewCredentials())
 		}
-		conn, err = grpc.DialContext(timeOutCtx, agentCliParam.Server, securityOption, grpc.WithPerRPCCredentials(&auth))
+		conn, err = grpc.NewClient(agentCliParam.Server, securityOption, grpc.WithPerRPCCredentials(&auth))
 		if err != nil {
 			printf("与面板建立连接失败: %v", err)
-			cancel()
 			retry()
 			continue
 		}
-		cancel()
-		client = pb.NewServerServiceClient(conn)
+		client = pb.ServerServiceClient(conn)
 		// 第一步注册
-		timeOutCtx, cancel = context.WithTimeout(context.Background(), networkTimeOut)
+		timeOutCtx, cancel := context.WithTimeout(context.Background(), networkTimeOut)
 		_, err = client.ReportSystemInfo(timeOutCtx, monitor.GetHost().PB())
 		if err != nil {
 			printf("上报系统信息失败: %v", err)
@@ -387,7 +395,7 @@ func doTask(task *pb.Task) {
 		handleNATTask(task)
 		return
 	case model.TaskTypeReportHostInfo:
-		reportState(time.Time{})
+		reportHost()
 		return
 	case model.TaskTypeFM:
 		handleFMTask(task)
@@ -425,22 +433,36 @@ func reportState(lastReportHostInfo time.Time) time.Time {
 		}
 		// 每10分钟重新获取一次硬件信息
 		if lastReportHostInfo.Before(time.Now().Add(-10 * time.Minute)) {
-			lastReportHostInfo = time.Now()
-			client.ReportSystemInfo(context.Background(), monitor.GetHost().PB())
-			if monitor.GeoQueryIP != "" {
-				geoip, err := client.LookupGeoIP(context.Background(), &pb.GeoIP{Ip: monitor.GeoQueryIP})
-				if err == nil {
-					monitor.CachedCountryCode = geoip.GetCountryCode()
-				}
+			if reportHost() {
+				lastReportHostInfo = time.Now()
 			}
 		}
 	}
 	return lastReportHostInfo
 }
 
+func reportHost() bool {
+	if !hostStatus.CompareAndSwap(false, true) {
+		return false
+	}
+	defer hostStatus.Store(false)
+
+	if client != nil && initialized {
+		client.ReportSystemInfo(context.Background(), monitor.GetHost().PB())
+		if monitor.GeoQueryIP != "" {
+			geoip, err := client.LookupGeoIP(context.Background(), &pb.GeoIP{Ip: monitor.GeoQueryIP})
+			if err == nil {
+				monitor.CachedCountryCode = geoip.GetCountryCode()
+			}
+		}
+	}
+
+	return true
+}
+
 // doSelfUpdate 执行更新检查 如果更新成功则会结束进程
 func doSelfUpdate(useLocalVersion bool) {
-	v := semver.MustParse("0.4.23")
+	v := semver.MustParse("0.4.24")
 	if useLocalVersion {
 		v = semver.MustParse(version)
 	}
@@ -467,13 +489,18 @@ func doSelfUpdate(useLocalVersion bool) {
 }
 
 func handleUpgradeTask(*pb.Task, *pb.TaskResult) {
-	if agentCliParam.DisableForceUpdate {
-		return
-	}
-	doSelfUpdate(false)
-}
+ 	if agentCliParam.DisableForceUpdate {
+ 		return
+ 	}
+ 	doSelfUpdate(false)
+ }
 
 func handleTcpPingTask(task *pb.Task, result *pb.TaskResult) {
+	if agentCliParam.DisableSendQuery {
+		result.Data = "此 Agent 已禁止发送请求"
+		return
+	}
+
 	host, port, err := net.SplitHostPort(task.GetData())
 	if err != nil {
 		result.Data = err.Error()
@@ -494,12 +521,17 @@ func handleTcpPingTask(task *pb.Task, result *pb.TaskResult) {
 		result.Data = err.Error()
 	} else {
 		conn.Close()
-		result.Delay = float32(time.Since(start).Milliseconds())
+		result.Delay = float32(time.Since(start).Microseconds()) / 1000.0
 		result.Successful = true
 	}
 }
 
 func handleIcmpPingTask(task *pb.Task, result *pb.TaskResult) {
+	if agentCliParam.DisableSendQuery {
+		result.Data = "此 Agent 已禁止发送请求"
+		return
+	}
+
 	ipAddr, err := lookupIP(task.GetData())
 	if err != nil {
 		result.Data = err.Error()
@@ -532,8 +564,7 @@ func handleCommandTask(task *pb.Task, result *pb.TaskResult) {
 		return
 	}
 	startedAt := time.Now()
-	var cmd *exec.Cmd
-	var endCh = make(chan struct{})
+	endCh := make(chan struct{})
 	pg, err := processgroup.NewProcessExitGroup()
 	if err != nil {
 		// 进程组创建失败，直接退出
@@ -541,12 +572,14 @@ func handleCommandTask(task *pb.Task, result *pb.TaskResult) {
 		return
 	}
 	timeout := time.NewTimer(time.Hour * 2)
-	if util.IsWindows() {
-		cmd = exec.Command("cmd", "/c", task.GetData()) // #nosec
-	} else {
-		cmd = exec.Command("sh", "-c", task.GetData()) // #nosec
-	}
+	cmd := processgroup.NewCommand(task.GetData())
+	var b bytes.Buffer
+	cmd.Stdout = &b
 	cmd.Env = os.Environ()
+	if err = cmd.Start(); err != nil {
+		result.Data = err.Error()
+		return
+	}
 	pg.AddProcess(cmd)
 	go func() {
 		select {
@@ -558,12 +591,11 @@ func handleCommandTask(task *pb.Task, result *pb.TaskResult) {
 			timeout.Stop()
 		}
 	}()
-	output, err := cmd.Output()
-	if err != nil {
-		result.Data += fmt.Sprintf("%s\n%s", string(output), err.Error())
+	if err = cmd.Wait(); err != nil {
+		result.Data += fmt.Sprintf("%s\n%s", b.String(), err.Error())
 	} else {
 		close(endCh)
-		result.Data = string(output)
+		result.Data = b.String()
 		result.Successful = true
 	}
 	pg.Dispose()
@@ -651,6 +683,11 @@ func handleTerminalTask(task *pb.Task) {
 }
 
 func handleNATTask(task *pb.Task) {
+	if agentCliParam.DisableNat {
+		println("此 Agent 已禁止内网穿透")
+		return
+	}
+
 	var nat model.TaskNAT
 	err := util.Json.Unmarshal([]byte(task.GetData()), &nat)
 	if err != nil {
@@ -774,7 +811,7 @@ func generateQueue(start int, size int) []int {
 
 func lookupIP(hostOrIp string) (string, error) {
 	if net.ParseIP(hostOrIp) == nil {
-		ips, err := resolver.LookupIPAddr(context.Background(), hostOrIp)
+		ips, err := dnsResolver.LookupIPAddr(context.Background(), hostOrIp)
 		if err != nil {
 			return "", err
 		}
