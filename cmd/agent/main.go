@@ -253,6 +253,7 @@ func run() {
 	}
 
 	for {
+		timeOutCtx, cancel := context.WithTimeout(context.Background(), networkTimeOut)
 		var securityOption grpc.DialOption
 		if agentCliParam.TLS {
 			if agentCliParam.InsecureTLS {
@@ -395,7 +396,7 @@ func doTask(task *pb.Task) {
 		handleNATTask(task)
 		return
 	case model.TaskTypeReportHostInfo:
-		reportHost()
+		reportState(time.Time{})
 		return
 	case model.TaskTypeFM:
 		handleFMTask(task)
@@ -457,7 +458,7 @@ func reportHost() bool {
 		}
 	}
 
-	return true
+	return lastReportHostInfo
 }
 
 // doSelfUpdate 执行更新检查 如果更新成功则会结束进程
