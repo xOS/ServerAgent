@@ -4,13 +4,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -18,7 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ebi-yade/altsvc-go"
+	"github.com/blang/semver"
+	"github.com/nezhahq/go-github-selfupdate/selfupdate"
 	"github.com/nezhahq/service"
 	ping "github.com/prometheus-community/pro-bing"
 	"github.com/quic-go/quic-go/http3"
@@ -489,11 +487,11 @@ func doSelfUpdate(useLocalVersion bool) {
 }
 
 func handleUpgradeTask(*pb.Task, *pb.TaskResult) {
- 	if agentCliParam.DisableForceUpdate {
- 		return
- 	}
- 	doSelfUpdate(false)
- }
+	if agentCliParam.DisableForceUpdate {
+		return
+	}
+	doSelfUpdate(false)
+}
 
 func handleTcpPingTask(task *pb.Task, result *pb.TaskResult) {
 	if agentCliParam.DisableSendQuery {
