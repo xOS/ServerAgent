@@ -263,15 +263,17 @@ func run() {
 		} else {
 			securityOption = grpc.WithTransportCredentials(insecure.NewCredentials())
 		}
-		conn, err = grpc.NewClient(agentCliParam.Server, securityOption, grpc.WithPerRPCCredentials(&auth))
+		conn, err = grpc.DialContext(timeOutCtx, agentCliParam.Server, securityOption, grpc.WithPerRPCCredentials(&auth))
 		if err != nil {
 			printf("与面板建立连接失败: %v", err)
+			cancel()
 			retry()
 			continue
 		}
-		client = pb.ServerServiceClient(conn)
+		cancel()
+		client = pb.NewServerServiceClient(conn)
 		// 第一步注册
-		timeOutCtx, cancel := context.WithTimeout(context.Background(), networkTimeOut)
+		timeOutCtx, cancel = context.WithTimeout(context.Background(), networkTimeOut)
 		_, err = client.ReportSystemInfo(timeOutCtx, monitor.GetHost().PB())
 		if err != nil {
 			printf("上报系统信息失败: %v", err)
