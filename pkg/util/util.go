@@ -11,11 +11,18 @@ import (
 	"github.com/nezhahq/service"
 )
 
-const MacOSChromeUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
+const (
+	MacOSChromeUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
+	// Buffer sizes
+	DefaultBufferSize = 10240
+	FileBufferSize    = 1048576
+)
 
 var (
 	Json                  = jsoniter.ConfigCompatibleWithStandardLibrary
 	Logger service.Logger = service.ConsoleLogger
+	// Stream header for StreamID
+	StreamIDHeader = []byte{0xff, 0x05, 0xff, 0x05}
 )
 
 func IsWindows() bool {
@@ -63,4 +70,26 @@ func RemoveDuplicate[T comparable](sliceList []T) []T {
 		}
 	}
 	return list
+}
+
+// DebugLogger provides debug-aware logging functionality
+type DebugLogger struct {
+	enabled bool
+}
+
+func NewDebugLogger(enabled bool) *DebugLogger {
+	return &DebugLogger{enabled: enabled}
+}
+
+func (d *DebugLogger) Printf(format string, v ...interface{}) {
+	Printf(d.enabled, format, v...)
+}
+
+func (d *DebugLogger) Println(v ...interface{}) {
+	Println(d.enabled, v...)
+}
+
+// CreateStreamIDData creates StreamID data for IOStream
+func CreateStreamIDData(streamID string) []byte {
+	return append(StreamIDHeader, []byte(streamID)...)
 }

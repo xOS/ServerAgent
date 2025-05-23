@@ -10,6 +10,7 @@ import (
 	"os/user"
 	"path/filepath"
 
+	"github.com/xos/serveragent/pkg/util"
 	pb "github.com/xos/serveragent/proto"
 )
 
@@ -97,7 +98,7 @@ func (t *Task) download() {
 		return
 	}
 
-	buffer := make([]byte, 1048576)
+	buffer := make([]byte, util.FileBufferSize)
 	for {
 		n, err := file.Read(buffer)
 		if err != nil {

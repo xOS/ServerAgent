@@ -81,7 +81,7 @@ func GetHost() *model.Host {
 	var cpuType string
 	hi, err := host.Info()
 	if err != nil {
-		printf("host.Info error: %v", err)
+		util.Printf(agentConfig.Debug, "host.Info error: %v", err)
 	} else {
 		if hi.VirtualizationRole == "guest" {
 			cpuType = "Virtual"
@@ -101,7 +101,7 @@ func GetHost() *model.Host {
 		ci, err := cpu.Info()
 		if err != nil {
 			hostDataFetchAttempts["CPU"]++
-			printf("cpu.Info error: %v, attempt: %d", err, hostDataFetchAttempts["CPU"])
+			util.Printf(agentConfig.Debug, "cpu.Info error: %v, attempt: %d", err, hostDataFetchAttempts["CPU"])
 		} else {
 			hostDataFetchAttempts["CPU"] = 0
 			for i := 0; i < len(ci); i++ {
@@ -122,7 +122,7 @@ func GetHost() *model.Host {
 			ret.GPU, err = gpu.GetGPUModel()
 			if err != nil {
 				hostDataFetchAttempts["GPU"]++
-				printf("gpu.GetGPUModel error: %v, attempt: %d", err, hostDataFetchAttempts["GPU"])
+				util.Printf(agentConfig.Debug, "gpu.GetGPUModel error: %v, attempt: %d", err, hostDataFetchAttempts["GPU"])
 			} else {
 				hostDataFetchAttempts["GPU"] = 0
 			}
@@ -133,7 +133,7 @@ func GetHost() *model.Host {
 
 	mv, err := mem.VirtualMemory()
 	if err != nil {
-		printf("mem.VirtualMemory error: %v", err)
+		util.Printf(agentConfig.Debug, "mem.VirtualMemory error: %v", err)
 	} else {
 		ret.MemTotal = mv.Total
 		if runtime.GOOS != "windows" {
@@ -144,7 +144,7 @@ func GetHost() *model.Host {
 	if runtime.GOOS == "windows" {
 		ms, err := mem.SwapMemory()
 		if err != nil {
-			printf("mem.SwapMemory error: %v", err)
+			util.Printf(agentConfig.Debug, "mem.SwapMemory error: %v", err)
 		} else {
 			ret.SwapTotal = ms.Total
 		}
@@ -165,7 +165,7 @@ func GetState(skipConnectionCount bool, skipProcsCount bool) *model.HostState {
 		cp, err := cpu.Percent(0, false)
 		if err != nil || len(cp) == 0 {
 			statDataFetchAttempts["CPU"]++
-			printf("cpu.Percent error: %v, attempt: %d", err, statDataFetchAttempts["CPU"])
+			util.Printf(agentConfig.Debug, "cpu.Percent error: %v, attempt: %d", err, statDataFetchAttempts["CPU"])
 		} else {
 			statDataFetchAttempts["CPU"] = 0
 			ret.CPU = cp[0]
@@ -174,7 +174,7 @@ func GetState(skipConnectionCount bool, skipProcsCount bool) *model.HostState {
 
 	vm, err := mem.VirtualMemory()
 	if err != nil {
-		printf("mem.VirtualMemory error: %v", err)
+		util.Printf(agentConfig.Debug, "mem.VirtualMemory error: %v", err)
 	} else {
 		ret.MemUsed = vm.Total - vm.Available
 		if runtime.GOOS != "windows" {
@@ -185,7 +185,7 @@ func GetState(skipConnectionCount bool, skipProcsCount bool) *model.HostState {
 		// gopsutil 在 Windows 下不能正确取 swap
 		ms, err := mem.SwapMemory()
 		if err != nil {
-			printf("mem.SwapMemory error: %v", err)
+			util.Printf(agentConfig.Debug, "mem.SwapMemory error: %v", err)
 		} else {
 			ret.SwapUsed = ms.Used
 		}
@@ -197,7 +197,7 @@ func GetState(skipConnectionCount bool, skipProcsCount bool) *model.HostState {
 		loadStat, err := load.Avg()
 		if err != nil {
 			statDataFetchAttempts["Load"]++
-			printf("load.Avg error: %v, attempt: %d", err, statDataFetchAttempts["Load"])
+			util.Printf(agentConfig.Debug, "load.Avg error: %v, attempt: %d", err, statDataFetchAttempts["Load"])
 		} else {
 			statDataFetchAttempts["Load"] = 0
 			ret.Load1 = loadStat.Load1
@@ -210,7 +210,7 @@ func GetState(skipConnectionCount bool, skipProcsCount bool) *model.HostState {
 	if !skipProcsCount {
 		procs, err = process.Pids()
 		if err != nil {
-			printf("process.Pids error: %v", err)
+			util.Printf(agentConfig.Debug, "process.Pids error: %v", err)
 		} else {
 			ret.ProcessCount = uint64(len(procs))
 		}
@@ -355,7 +355,7 @@ func updateGPUStat() float64 {
 			gs, err := gpustat.GetGPUStat()
 			if err != nil {
 				statDataFetchAttempts["GPU"]++
-				printf("gpustat.GetGPUStat error: %v, attempt: %d", err, statDataFetchAttempts["GPU"])
+				util.Printf(agentConfig.Debug, "gpustat.GetGPUStat error: %v, attempt: %d", err, statDataFetchAttempts["GPU"])
 				return 0
 			} else {
 				statDataFetchAttempts["GPU"] = 0
@@ -376,7 +376,7 @@ func updateTemperatureStat() {
 		temperatures, err := sensors.SensorsTemperatures()
 		if err != nil {
 			statDataFetchAttempts["Temperatures"]++
-			printf("host.SensorsTemperatures error: %v, attempt: %d", err, statDataFetchAttempts["Temperatures"])
+			util.Printf(agentConfig.Debug, "host.SensorsTemperatures error: %v, attempt: %d", err, statDataFetchAttempts["Temperatures"])
 		} else {
 			statDataFetchAttempts["Temperatures"] = 0
 			tempStat := []model.SensorTemperature{}
@@ -396,8 +396,4 @@ func updateTemperatureStat() {
 			temperatureStat = tempStat
 		}
 	}
-}
-
-func printf(format string, v ...interface{}) {
-	util.Printf(agentConfig.Debug, format, v...)
 }
