@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 	"sort"
@@ -86,10 +87,28 @@ func GetHost() *model.Host {
 		if hi.VirtualizationRole == "guest" {
 			cpuType = "Virtual"
 			ret.Virtualization = hi.VirtualizationSystem
+			util.Printf(agentConfig.Debug, "Detected virtualization: Role=%s, System=%s", hi.VirtualizationRole, hi.VirtualizationSystem)
 		} else {
 			cpuType = "Physical"
-			ret.Virtualization = ""
+			if hi.VirtualizationSystem != "" {
+				ret.Virtualization = hi.VirtualizationSystem
+				util.Printf(agentConfig.Debug, "Non-guest virtualization detected: Role=%s, System=%s", hi.VirtualizationRole, hi.VirtualizationSystem)
+			} else {
+				ret.Virtualization = ""
+				util.Printf(agentConfig.Debug, "No virtualization detected: Role=%s", hi.VirtualizationRole)
+			}
 		}
+
+		// 如果主要检测方法失败，尝试备用检测方法
+		if ret.Virtualization == "" {
+			fallbackResult := detectVirtualizationFallback()
+			if fallbackResult != "" {
+				ret.Virtualization = fallbackResult
+				cpuType = "Virtual"
+				util.Printf(agentConfig.Debug, "Fallback detection found: %s", fallbackResult)
+			}
+		}
+
 		ret.Platform = hi.Platform
 		ret.PlatformVersion = hi.PlatformVersion
 		ret.Arch = hi.KernelArch
@@ -396,4 +415,76 @@ func updateTemperatureStat() {
 			temperatureStat = tempStat
 		}
 	}
+}
+
+// detectVirtualizationFallback 使用多种方法尝试检测虚拟化环境
+func detectVirtualizationFallback() string {
+	// 方法1: 检查 /proc/cpuinfo 中的虚拟化标识 (Linux)
+	if runtime.GOOS == "linux" {
+		if cpuinfo, err := os.ReadFile("/proc/cpuinfo"); err == nil {
+			cpuinfoStr := string(cpuinfo)
+			if strings.Contains(cpuinfoStr, "QEMU") {
+				return "QEMU"
+			}
+			if strings.Contains(cpuinfoStr, "VMware") {
+				return "VMware"
+			}
+			if strings.Contains(cpuinfoStr, "VirtualBox") {
+				return "VirtualBox"
+			}
+			if strings.Contains(cpuinfoStr, "Xen") {
+				return "Xen"
+			}
+			if strings.Contains(cpuinfoStr, "Microsoft") {
+				return "Hyper-V"
+			}
+		}
+
+		// 方法2: 检查 /sys/class/dmi/id/product_name
+		if productName, err := os.ReadFile("/sys/class/dmi/id/product_name"); err == nil {
+			product := strings.TrimSpace(string(productName))
+			if strings.Contains(product, "VMware") {
+				return "VMware"
+			}
+			if strings.Contains(product, "VirtualBox") {
+				return "VirtualBox"
+			}
+			if strings.Contains(product, "QEMU") {
+				return "QEMU"
+			}
+		}
+
+		// 方法3: 检查容器环境
+		if _, err := os.Stat("/.dockerenv"); err == nil {
+			return "Docker"
+		}
+		if controlGroup, err := os.ReadFile("/proc/1/cgroup"); err == nil {
+			if strings.Contains(string(controlGroup), "docker") {
+				return "Docker"
+			}
+			if strings.Contains(string(controlGroup), "lxc") {
+				return "LXC"
+			}
+		}
+	}
+
+	// 方法4: Windows 检测
+	if runtime.GOOS == "windows" {
+		// 使用 wmic 检测
+		cmd := exec.Command("wmic", "computersystem", "get", "model")
+		if output, err := cmd.Output(); err == nil {
+			model := string(output)
+			if strings.Contains(model, "VMware") {
+				return "VMware"
+			}
+			if strings.Contains(model, "VirtualBox") {
+				return "VirtualBox"
+			}
+			if strings.Contains(model, "Virtual Machine") {
+				return "Hyper-V"
+			}
+		}
+	}
+
+	return ""
 }
