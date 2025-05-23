@@ -1,6 +1,6 @@
 module github.com/xos/serveragent
 
-go 1.20
+go 1.22
 
 require (
 	github.com/AlecAivazis/survey/v2 v2.3.7
@@ -16,7 +16,7 @@ require (
 	github.com/nezhahq/go-github-selfupdate v0.0.0-20241205090552-0b56e412e750
 	github.com/nezhahq/service v0.0.0-20240704142721-eba37f9cc709
 	github.com/prometheus-community/pro-bing v0.4.1
-	github.com/quic-go/quic-go v0.40.1
+	github.com/quic-go/quic-go v0.48.2
 	github.com/refraction-networking/utls v1.6.3
 	github.com/shirou/gopsutil/v4 v4.24.10
 	github.com/spf13/cobra v1.8.1
@@ -62,8 +62,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.2.2 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/power-devops/perfstat v0.0.0-20221212215047-62379fc7944b // indirect
-	github.com/quic-go/qpack v0.4.0 // indirect
-	github.com/quic-go/qtls-go1-20 v0.4.1 // indirect
+	github.com/quic-go/qpack v0.5.1 // indirect
 	github.com/sagikazarmark/locafero v0.4.0 // indirect
 	github.com/sagikazarmark/slog-shim v0.1.0 // indirect
 	github.com/sourcegraph/conc v0.3.0 // indirect
@@ -80,7 +79,7 @@ require (
 	go.uber.org/mock v0.4.0 // indirect
 	go.uber.org/multierr v1.9.0 // indirect
 	golang.org/x/crypto v0.31.0 // indirect
-	golang.org/x/exp v0.0.0-20230905200255-921286631fa9 // indirect
+	golang.org/x/exp v0.0.0-20240506185415-9bf2ced13842 // indirect
 	golang.org/x/mod v0.17.0 // indirect
 	golang.org/x/oauth2 v0.18.0 // indirect
 	golang.org/x/sync v0.10.0 // indirect
