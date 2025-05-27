@@ -150,13 +150,13 @@ func GetHost() *model.Host {
 
 	ret.DiskTotal, _ = getDiskTotalAndUsed()
 
-	mv, err := mem.VirtualMemory()
+	vm, err := mem.VirtualMemory()
 	if err != nil {
 		util.Printf(agentConfig.Debug, "mem.VirtualMemory error: %v", err)
 	} else {
-		ret.MemTotal = mv.Total
+		ret.MemTotal = vm.Total
 		if runtime.GOOS != "windows" {
-			ret.SwapTotal = mv.SwapTotal
+			ret.SwapTotal = vm.SwapTotal
 		}
 	}
 
@@ -195,7 +195,7 @@ func GetState(skipConnectionCount bool, skipProcsCount bool) *model.HostState {
 	if err != nil {
 		util.Printf(agentConfig.Debug, "mem.VirtualMemory error: %v", err)
 	} else {
-		ret.MemUsed = vm.Total - vm.Available
+		ret.MemUsed = vm.Used
 		if runtime.GOOS != "windows" {
 			ret.SwapUsed = vm.SwapTotal - vm.SwapFree
 		}
