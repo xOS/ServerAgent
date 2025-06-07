@@ -38,25 +38,7 @@ import (
 	pb "github.com/xos/serveragent/proto"
 )
 
-// Agent 运行时参数。如需添加新参数，记得同时在 service.go 中添加
-type AgentCliParam struct {
-	SkipConnectionCount   bool   // 跳过连接数检查
-	SkipProcsCount        bool   // 跳过进程数量检查
-	DisableAutoUpdate     bool   // 关闭自动更新
-	DisableForceUpdate    bool   // 关闭强制更新
-	DisableCommandExecute bool   // 关闭命令执行
-	Server                string // 服务器地址
-	ClientSecret          string // 客户端密钥
-	ReportDelay           int    // 报告间隔
-	TLS                   bool   // 是否使用TLS加密传输至服务端
-	InsecureTLS           bool   // 是否禁用证书检查
-	Version               bool   // 当前版本号
-	IPReportPeriod        uint32 // 上报IP间隔
-	UseIPv6CountryCode    bool   // 默认优先展示IPv6旗帜
-	UseGiteeToUpgrade     bool   // 强制从Gitee获取更新
-	DisableNat            bool   // 关闭内网穿透
-	DisableSendQuery      bool   // 关闭发送TCP/ICMP/HTTP请求
-}
+// AgentCliParam 已废弃，所有参数现在都在 AgentConfig 中统一管理
 
 var (
 	version     string
@@ -76,10 +58,9 @@ var agentCmd = &cobra.Command{
 }
 
 var (
-	agentCliParam AgentCliParam
-	agentConfig   model.AgentConfig
-	debugLogger   *util.DebugLogger
-	httpClient    = &http.Client{
+	agentConfig model.AgentConfig
+	debugLogger *util.DebugLogger
+	httpClient  = &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -137,26 +118,29 @@ func init() {
 		panic(err)
 	}
 
-	// 初始化运行参数
-	agentCmd.PersistentFlags().StringVarP(&agentCliParam.Server, "server", "s", "localhost:2222", "管理面板RPC端口")
-	agentCmd.PersistentFlags().StringVarP(&agentCliParam.ClientSecret, "password", "p", "", "Agent连接Secret")
-	agentCmd.PersistentFlags().BoolVar(&agentCliParam.TLS, "tls", false, "启用SSL/TLS加密")
-	agentCmd.PersistentFlags().BoolVarP(&agentCliParam.InsecureTLS, "insecure", "k", false, "禁用证书检查")
+	// 初始化运行参数 - 现在统一使用 agentConfig
+	agentCmd.PersistentFlags().StringVarP(&agentConfig.Server, "server", "s", "localhost:2222", "管理面板RPC端口")
+	agentCmd.PersistentFlags().StringVarP(&agentConfig.ClientSecret, "password", "p", "", "Agent连接Secret")
+	agentCmd.PersistentFlags().BoolVar(&agentConfig.TLS, "tls", false, "启用SSL/TLS加密")
+	agentCmd.PersistentFlags().BoolVarP(&agentConfig.InsecureTLS, "insecure", "k", false, "禁用证书检查")
 	agentCmd.PersistentFlags().BoolVarP(&agentConfig.Debug, "debug", "d", true, "开启调试信息")
-	agentCmd.PersistentFlags().IntVar(&agentCliParam.ReportDelay, "report-delay", 1, "系统状态上报间隔")
-	agentCmd.PersistentFlags().BoolVar(&agentCliParam.SkipConnectionCount, "skip-conn", false, "不监控连接数")
-	agentCmd.PersistentFlags().BoolVar(&agentCliParam.SkipProcsCount, "skip-procs", false, "不监控进程数")
-	agentCmd.PersistentFlags().BoolVar(&agentCliParam.DisableCommandExecute, "disable-command-execute", false, "禁止在此机器上执行命令")
-	agentCmd.PersistentFlags().BoolVar(&agentCliParam.DisableNat, "disable-nat", false, "禁止此机器内网穿透")
-	agentCmd.PersistentFlags().BoolVar(&agentCliParam.DisableSendQuery, "disable-send-query", false, "禁止此机器发送TCP/ICMP/HTTP请求")
-	agentCmd.PersistentFlags().BoolVar(&agentCliParam.DisableAutoUpdate, "disable-auto-update", false, "禁用自动升级")
-	agentCmd.PersistentFlags().BoolVar(&agentCliParam.DisableForceUpdate, "disable-force-update", false, "禁用强制升级")
-	agentCmd.PersistentFlags().BoolVar(&agentCliParam.UseIPv6CountryCode, "use-ipv6-countrycode", false, "使用IPv6的位置上报")
+	agentCmd.PersistentFlags().IntVar(&agentConfig.ReportDelay, "report-delay", 1, "系统状态上报间隔")
+	agentCmd.PersistentFlags().BoolVar(&agentConfig.SkipConnectionCount, "skip-conn", false, "不监控连接数")
+	agentCmd.PersistentFlags().BoolVar(&agentConfig.SkipProcsCount, "skip-procs", false, "不监控进程数")
+	agentCmd.PersistentFlags().BoolVar(&agentConfig.DisableCommandExecute, "disable-command-execute", false, "禁止在此机器上执行命令")
+	agentCmd.PersistentFlags().BoolVar(&agentConfig.DisableNat, "disable-nat", false, "禁止此机器内网穿透")
+	agentCmd.PersistentFlags().BoolVar(&agentConfig.DisableSendQuery, "disable-send-query", false, "禁止此机器发送TCP/ICMP/HTTP请求")
+	agentCmd.PersistentFlags().BoolVar(&agentConfig.DisableAutoUpdate, "disable-auto-update", false, "禁用自动升级")
+	agentCmd.PersistentFlags().BoolVar(&agentConfig.DisableForceUpdate, "disable-force-update", false, "禁用强制升级")
+	agentCmd.PersistentFlags().BoolVar(&agentConfig.UseIPv6CountryCode, "use-ipv6-countrycode", false, "使用IPv6的位置上报")
 	agentCmd.PersistentFlags().BoolVar(&agentConfig.GPU, "gpu", false, "启用GPU监控")
 	agentCmd.PersistentFlags().BoolVar(&agentConfig.Temperature, "temperature", false, "启用温度监控")
-	agentCmd.PersistentFlags().BoolVar(&agentCliParam.UseGiteeToUpgrade, "gitee", false, "使用Gitee获取更新")
-	agentCmd.PersistentFlags().Uint32VarP(&agentCliParam.IPReportPeriod, "ip-report-period", "u", 30*60, "本地IP更新间隔, 上报频率依旧取决于report-delay的值")
-	agentCmd.Flags().BoolVarP(&agentCliParam.Version, "version", "v", false, "查看当前版本号")
+	agentCmd.PersistentFlags().BoolVar(&agentConfig.UseGiteeToUpgrade, "gitee", false, "使用Gitee获取更新")
+	agentCmd.PersistentFlags().Uint32VarP(&agentConfig.IPReportPeriod, "ip-report-period", "u", 30*60, "本地IP更新间隔, 上报频率依旧取决于report-delay的值")
+
+	// Version 参数保持独立，因为它不需要保存到配置文件
+	var showVersion bool
+	agentCmd.Flags().BoolVarP(&showVersion, "version", "v", false, "查看当前版本号")
 
 	agentConfig.Read(filepath.Dir(ex) + "/config.yml")
 
@@ -196,17 +180,19 @@ func preRun(cmd *cobra.Command, args []string) {
 	// 来自于 GoReleaser 的版本号
 	monitor.Version = version
 
-	if agentCliParam.Version {
+	// 检查版本参数
+	showVersion, _ := cmd.Flags().GetBool("version")
+	if showVersion {
 		fmt.Println(version)
 		os.Exit(0)
 	}
 
-	if agentCliParam.ClientSecret == "" {
+	if agentConfig.ClientSecret == "" {
 		cmd.Help()
 		os.Exit(1)
 	}
 
-	if agentCliParam.ReportDelay < 1 || agentCliParam.ReportDelay > 4 {
+	if agentConfig.ReportDelay < 1 || agentConfig.ReportDelay > 4 {
 		println("report-delay 的区间为 1-4")
 		os.Exit(1)
 	}
@@ -217,11 +203,11 @@ func preRun(cmd *cobra.Command, args []string) {
 
 func run() {
 	auth := model.AuthHandler{
-		ClientSecret: agentCliParam.ClientSecret,
+		ClientSecret: agentConfig.ClientSecret,
 	}
 
 	// 下载远程命令执行需要的终端
-	if !agentCliParam.DisableCommandExecute {
+	if !agentConfig.DisableCommandExecute {
 		go func() {
 			if err := pty.DownloadDependency(); err != nil {
 				debugLogger.Printf("pty 下载依赖失败: %v", err)
@@ -231,10 +217,10 @@ func run() {
 	// 上报服务器信息
 	go reportStateDaemon()
 	// 更新IP信息
-	go monitor.UpdateIP(agentCliParam.UseIPv6CountryCode, agentCliParam.IPReportPeriod)
+	go monitor.UpdateIP(agentConfig.UseIPv6CountryCode, agentConfig.IPReportPeriod)
 
 	// 定时检查更新
-	if _, err := semver.Parse(version); err == nil && !agentCliParam.DisableAutoUpdate {
+	if _, err := semver.Parse(version); err == nil && !agentConfig.DisableAutoUpdate {
 		doSelfUpdate(true)
 		go func() {
 			for range time.Tick(20 * time.Minute) {
@@ -259,8 +245,8 @@ func run() {
 	for {
 		timeOutCtx, cancel := context.WithTimeout(context.Background(), networkTimeOut)
 		var securityOption grpc.DialOption
-		if agentCliParam.TLS {
-			if agentCliParam.InsecureTLS {
+		if agentConfig.TLS {
+			if agentConfig.InsecureTLS {
 				securityOption = grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true}))
 			} else {
 				securityOption = grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12}))
@@ -268,7 +254,7 @@ func run() {
 		} else {
 			securityOption = grpc.WithTransportCredentials(insecure.NewCredentials())
 		}
-		conn, err = grpc.DialContext(timeOutCtx, agentCliParam.Server, securityOption, grpc.WithPerRPCCredentials(&auth))
+		conn, err = grpc.DialContext(timeOutCtx, agentConfig.Server, securityOption, grpc.WithPerRPCCredentials(&auth))
 		if err != nil {
 			debugLogger.Printf("与面板建立连接失败: %v", err)
 			cancel()
@@ -422,7 +408,7 @@ func reportStateDaemon() {
 	for {
 		// 为了更准确的记录时段流量，inited 后再上传状态信息
 		lastReportHostInfo = reportState(lastReportHostInfo)
-		time.Sleep(time.Second * time.Duration(agentCliParam.ReportDelay))
+		time.Sleep(time.Second * time.Duration(agentConfig.ReportDelay))
 	}
 }
 
@@ -430,7 +416,7 @@ func reportState(lastReportHostInfo time.Time) time.Time {
 	if client != nil && initialized {
 		monitor.TrackNetworkSpeed()
 		timeOutCtx, cancel := context.WithTimeout(context.Background(), networkTimeOut)
-		_, err := client.ReportSystemState(timeOutCtx, monitor.GetState(agentCliParam.SkipConnectionCount, agentCliParam.SkipProcsCount).PB())
+		_, err := client.ReportSystemState(timeOutCtx, monitor.GetState(agentConfig.SkipConnectionCount, agentConfig.SkipProcsCount).PB())
 		cancel()
 		if err != nil {
 			debugLogger.Printf("reportState error: %v", err)
@@ -474,7 +460,7 @@ func doSelfUpdate(useLocalVersion bool) {
 	debugLogger.Printf("检查更新: %v", v)
 	var latest *selfupdate.Release
 	var err error
-	if monitor.CachedCountryCode != "cn" && !agentCliParam.UseGiteeToUpgrade {
+	if monitor.CachedCountryCode != "cn" && !agentConfig.UseGiteeToUpgrade {
 		latest, err = selfupdate.UpdateSelf(v, "xOS/ServerAgent")
 	} else {
 		latest, err = selfupdate.UpdateSelfGitee(v, "Ten/ServerAgent")
@@ -494,14 +480,14 @@ func doSelfUpdate(useLocalVersion bool) {
 }
 
 func handleUpgradeTask(*pb.Task, *pb.TaskResult) {
-	if agentCliParam.DisableForceUpdate {
+	if agentConfig.DisableForceUpdate {
 		return
 	}
 	doSelfUpdate(false)
 }
 
 func handleTcpPingTask(task *pb.Task, result *pb.TaskResult) {
-	if agentCliParam.DisableSendQuery {
+	if agentConfig.DisableSendQuery {
 		result.Data = "此 Agent 已禁止发送请求"
 		return
 	}
@@ -532,7 +518,7 @@ func handleTcpPingTask(task *pb.Task, result *pb.TaskResult) {
 }
 
 func handleIcmpPingTask(task *pb.Task, result *pb.TaskResult) {
-	if agentCliParam.DisableSendQuery {
+	if agentConfig.DisableSendQuery {
 		result.Data = "此 Agent 已禁止发送请求"
 		return
 	}
@@ -564,7 +550,7 @@ func handleIcmpPingTask(task *pb.Task, result *pb.TaskResult) {
 }
 
 func handleCommandTask(task *pb.Task, result *pb.TaskResult) {
-	if agentCliParam.DisableCommandExecute {
+	if agentConfig.DisableCommandExecute {
 		result.Data = "此 Agent 已禁止命令执行"
 		return
 	}
@@ -613,7 +599,7 @@ type WindowSize struct {
 }
 
 func handleTerminalTask(task *pb.Task) {
-	if agentCliParam.DisableCommandExecute {
+	if agentConfig.DisableCommandExecute {
 		debugLogger.Println("此 Agent 已禁止命令执行")
 		return
 	}
@@ -680,7 +666,7 @@ func handleTerminalTask(task *pb.Task) {
 }
 
 func handleNATTask(task *pb.Task) {
-	if agentCliParam.DisableNat {
+	if agentConfig.DisableNat {
 		debugLogger.Println("此 Agent 已禁止内网穿透")
 		return
 	}
@@ -734,7 +720,7 @@ func handleNATTask(task *pb.Task) {
 }
 
 func handleFMTask(task *pb.Task) {
-	if agentCliParam.DisableCommandExecute {
+	if agentConfig.DisableCommandExecute {
 		debugLogger.Println("此 Agent 已禁止命令执行")
 		return
 	}

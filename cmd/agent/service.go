@@ -58,13 +58,13 @@ func init() {
 
 func servicePreRun(cmd *cobra.Command, args []string) {
 	if args[0] == "install" {
-		if agentCliParam.ClientSecret == "" {
+		if agentConfig.ClientSecret == "" {
 			cmd.Help()
 			os.Exit(1)
 		}
 	}
 
-	if agentCliParam.ReportDelay < 1 || agentCliParam.ReportDelay > 4 {
+	if agentConfig.ReportDelay < 1 || agentConfig.ReportDelay > 4 {
 		println("report-delay 的区间为 1-4")
 		os.Exit(1)
 	}
@@ -74,20 +74,20 @@ func serviceActions(cmd *cobra.Command, args []string) {
 	var agentCliFlags []string
 
 	flags := []AgentCliFlags{
-		{agentCliParam.Server != "localhost:5555", "-s", agentCliParam.Server},
-		{agentCliParam.ClientSecret != "", "-p", agentCliParam.ClientSecret},
-		{agentCliParam.TLS, "--tls", ""},
+		{agentConfig.Server != "localhost:2222", "-s", agentConfig.Server},
+		{agentConfig.ClientSecret != "", "-p", agentConfig.ClientSecret},
+		{agentConfig.TLS, "--tls", ""},
 		{agentConfig.Debug, "-d", ""},
-		{agentCliParam.ReportDelay != 1, "--report-delay", fmt.Sprint(agentCliParam.ReportDelay)},
-		{agentCliParam.SkipConnectionCount, "--skip-conn", ""},
-		{agentCliParam.SkipProcsCount, "--skip-procs", ""},
-		{agentCliParam.DisableCommandExecute, "--disable-command-execute", ""},
-		{agentCliParam.DisableAutoUpdate, "--disable-auto-update", ""},
-		{agentCliParam.DisableForceUpdate, "--disable-force-update", ""},
-		{agentCliParam.UseIPv6CountryCode, "--use-ipv6-countrycode", ""},
+		{agentConfig.ReportDelay != 1, "--report-delay", fmt.Sprint(agentConfig.ReportDelay)},
+		{agentConfig.SkipConnectionCount, "--skip-conn", ""},
+		{agentConfig.SkipProcsCount, "--skip-procs", ""},
+		{agentConfig.DisableCommandExecute, "--disable-command-execute", ""},
+		{agentConfig.DisableAutoUpdate, "--disable-auto-update", ""},
+		{agentConfig.DisableForceUpdate, "--disable-force-update", ""},
+		{agentConfig.UseIPv6CountryCode, "--use-ipv6-countrycode", ""},
 		{agentConfig.GPU, "--gpu", ""},
-		{agentCliParam.UseGiteeToUpgrade, "--gitee", ""},
-		{agentCliParam.IPReportPeriod != 30*60, "-u", fmt.Sprint(agentCliParam.IPReportPeriod)},
+		{agentConfig.UseGiteeToUpgrade, "--gitee", ""},
+		{agentConfig.IPReportPeriod != 30*60, "-u", fmt.Sprint(agentConfig.IPReportPeriod)},
 	}
 
 	for _, f := range flags {
