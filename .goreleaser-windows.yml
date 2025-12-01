@@ -1,0 +1,20 @@
+version: 2
+git:
+  ignore_tags:
+    - nightly
+builds:
+  - id: windows
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.arch={{.Arch}}
+    goos:
+      - windows
+    goarch:
+      - arm64
+      - 386
+      - amd64
+    main: ./cmd/agent
+    binary: server-agent
+snapshot:
+  version_template: "server-agent"

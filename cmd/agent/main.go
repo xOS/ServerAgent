@@ -19,7 +19,6 @@ import (
 	"github.com/nezhahq/go-github-selfupdate/selfupdate"
 	"github.com/nezhahq/service"
 	ping "github.com/prometheus-community/pro-bing"
-	"github.com/quic-go/quic-go/http3"
 	utls "github.com/refraction-networking/utls"
 	"github.com/shirou/gopsutil/v4/host"
 	"github.com/spf13/cobra"
@@ -65,13 +64,6 @@ var (
 			return http.ErrUseLastResponse
 		},
 		Timeout: time.Second * 30,
-	}
-	httpClient3 = &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-		Timeout:   time.Second * 30,
-		Transport: &http3.RoundTripper{},
 	}
 
 	hostStatus = new(atomic.Bool)

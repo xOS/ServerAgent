@@ -15,11 +15,103 @@ on:
       - master
 
 jobs:
+  build-windows:
+    strategy:
+      fail-fast: true
+      matrix:
+        goarch: [amd64, arm64, 386]
+
+    name: Build Windows artifacts
+    runs-on: ubuntu-latest
+    env:
+      GOOS: windows
+      GOARCH: ${{ matrix.goarch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.20.14"
+
+      - name: Downgrade dependencies for Go 1.20 (Windows 7 compatible)
+        run: |
+          sed -i 's/^go 1\.[0-9]*/go 1.20/' go.mod
+          # Downgrade golang.org/x/* packages to Go 1.20 compatible versions
+          go mod edit -require=golang.org/x/sys@v0.17.0
+          go mod edit -require=golang.org/x/net@v0.21.0
+          go mod edit -require=golang.org/x/crypto@v0.19.0
+          go mod edit -require=golang.org/x/sync@v0.6.0
+          go mod edit -require=golang.org/x/text@v0.14.0
+          go mod edit -require=golang.org/x/term@v0.17.0
+          go mod edit -require=golang.org/x/mod@v0.14.0
+          go mod edit -require=golang.org/x/tools@v0.17.0
+          go mod edit -require=golang.org/x/exp@v0.0.0-20240205201215-2c58cdc269a3
+          # Downgrade grpc to version compatible with Go 1.20
+          go mod edit -require=google.golang.org/grpc@v1.60.1
+          go mod edit -require=google.golang.org/protobuf@v1.32.0
+          # Downgrade utls and its dependencies to Go 1.20 compatible versions
+          go mod edit -require=github.com/refraction-networking/utls@v1.3.3
+          go mod edit -require=github.com/cloudflare/circl@v1.3.3
+          go mod edit -require=github.com/quic-go/quic-go@v0.33.0
+          go mod edit -require=github.com/spf13/viper@v1.18.2
+
+      - name: Regenerate proto files for Go 1.20 compatibility
+        run: |
+          # Install protoc
+          sudo apt-get update && sudo apt-get install -y protobuf-compiler
+          # Temporarily unset GOOS/GOARCH to install native tools (not cross-compile)
+          GOOS_SAVED=$GOOS
+          GOARCH_SAVED=$GOARCH
+          unset GOOS GOARCH
+          # Install protoc plugins for the host system
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.32.0
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.3.0
+          # Restore cross-compile env
+          export GOOS=$GOOS_SAVED
+          export GOARCH=$GOARCH_SAVED
+          # Regenerate proto files
+          GOBIN=$(go env GOPATH)/bin
+          protoc --plugin=protoc-gen-go=$GOBIN/protoc-gen-go \
+            --plugin=protoc-gen-go-grpc=$GOBIN/protoc-gen-go-grpc \
+            --go_out=. --go_opt=paths=source_relative \
+            --go-grpc_out=. --go-grpc_opt=paths=source_relative \
+            proto/server.proto
+          go mod tidy
+
+      - name: Build Test
+        if: github.event_name != 'push' || !contains(github.ref, 'refs/tags/')
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: build --single-target --clean --snapshot --skip=validate -f .goreleaser-windows.yml
+
+      - name: Build
+        if: github.event_name == 'push' && contains(github.ref, 'refs/tags/')
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: build --single-target --clean --skip=validate -f .goreleaser-windows.yml
+
+      - name: Archive
+        run: zip -jr dist/server-agent_${GOOS}_${GOARCH}.zip dist/*/*
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-agent_${{ env.GOOS }}_${{ env.GOARCH }}
+          path: |
+            ./dist/server-agent_${{ env.GOOS }}_${{ env.GOARCH }}.zip
+
   build:
     strategy:
       fail-fast: true
       matrix:
-        goos: [linux, windows, darwin, freebsd]
+        goos: [linux, darwin, freebsd]
         goarch: [amd64, arm64, 386]
         include:
           - goos: linux
@@ -56,7 +148,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24.0"
+          go-version: "1.24"
 
       - name: Build Test
         if: github.event_name != 'push' || !contains(github.ref, 'refs/tags/')
@@ -87,7 +179,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && contains(github.ref, 'refs/tags/')
-    needs: build
+    needs: [build, build-windows]
     name: Release
     steps:
       - name: Download artifacts
