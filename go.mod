@@ -1,5 +1,6 @@
 module github.com/xos/serveragent
 
+
 go 1.24.0
 
 require (
@@ -33,7 +34,7 @@ require (
 	github.com/StackExchange/wmi v1.2.1 // indirect
 	github.com/andybalholm/brotli v1.0.6 // indirect
 	github.com/antihax/optional v1.0.0 // indirect
-	github.com/cloudflare/circl v1.3.7 // indirect
+	github.com/cloudflare/circl v1.6.1 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
