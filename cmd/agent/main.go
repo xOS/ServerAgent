@@ -78,9 +78,13 @@ var (
 )
 
 const (
-	delayWhenError = time.Second * 10 // Agent 重连间隔
-	networkTimeOut = time.Second * 5  // 普通网络超时
+	delayWhenError     = time.Second * 10 // Agent 重连间隔
+	networkTimeOut     = time.Second * 5  // 普通网络超时
+	maxConcurrentTasks = 10               // 最大并发任务数
 )
+
+// taskSemaphore 用于限制并发任务数量，防止内存过度增长
+var taskSemaphore = make(chan struct{}, maxConcurrentTasks)
 
 func init() {
 	resolver.SetDefaultScheme("passthrough")
@@ -355,14 +359,27 @@ func receiveTasks(tasks pb.ServerService_RequestTaskClient) error {
 		if err != nil {
 			return err
 		}
-		go func() {
-			defer func() {
-				if err := recover(); err != nil {
-					debugLogger.Println("task panic", task, err)
-				}
-			}()
-			doTask(task)
-		}()
+		// 对于快速任务不限制并发
+		switch task.GetType() {
+		case model.TaskTypeKeepalive, model.TaskTypeReportHostInfo:
+			go doTask(task)
+		default:
+			// 对于可能耗费资源的任务限制并发
+			select {
+			case taskSemaphore <- struct{}{}:
+				go func(t *pb.Task) {
+					defer func() {
+						<-taskSemaphore
+						if err := recover(); err != nil {
+							debugLogger.Println("task panic", t, err)
+						}
+					}()
+					doTask(t)
+				}(task)
+			default:
+				debugLogger.Printf("任务队列已满，丢弃任务: %v", task.GetType())
+			}
+		}
 	}
 }
 
@@ -630,8 +647,10 @@ func handleTerminalTask(task *pb.Task) {
 	debugLogger.Println("terminal init", terminal.StreamID)
 
 	go func() {
+		bufPtr := util.GetBuffer()
+		defer util.PutBuffer(bufPtr)
+		buf := *bufPtr
 		for {
-			buf := make([]byte, util.DefaultBufferSize)
 			read, err := tty.Read(buf)
 			if err != nil {
 				helper.stream.Send(&pb.IOStreamData{Data: []byte(err.Error())})
@@ -698,7 +717,9 @@ func handleNATTask(task *pb.Task) {
 	debugLogger.Println("NAT init", nat.StreamID)
 
 	go func() {
-		buf := make([]byte, util.DefaultBufferSize)
+		bufPtr := util.GetBuffer()
+		defer util.PutBuffer(bufPtr)
+		buf := *bufPtr
 		for {
 			read, err := conn.Read(buf)
 			if err != nil {

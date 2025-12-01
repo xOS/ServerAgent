@@ -24,9 +24,9 @@ var (
 
 // UpdateIP 按设置时间间隔更新IP地址的缓存
 func UpdateIP(useIPv6CountryCode bool, period uint32) {
+	var wg sync.WaitGroup // 复用 WaitGroup
 	for {
 		util.Println(agentConfig.Debug, "正在更新本地缓存IP信息")
-		wg := new(sync.WaitGroup)
 		wg.Add(2)
 		var ipv4, ipv6 string
 		go func() {

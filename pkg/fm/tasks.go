@@ -98,7 +98,10 @@ func (t *Task) download() {
 		return
 	}
 
-	buffer := make([]byte, util.FileBufferSize)
+	// 使用缓冲池减少内存分配
+	bufPtr := util.GetLargeBuffer()
+	defer util.PutLargeBuffer(bufPtr)
+	buffer := *bufPtr
 	for {
 		n, err := file.Read(buffer)
 		if err != nil {

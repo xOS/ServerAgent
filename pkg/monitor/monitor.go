@@ -48,6 +48,9 @@ var (
 	netInSpeed, netOutSpeed, netInTransfer, netOutTransfer, lastUpdateNetStats uint64
 	cachedBootTime                                                             time.Time
 	temperatureStat                                                            []model.SensorTemperature
+	// 磁盘分区缓存，避免频繁查询
+	cachedDiskDevices     map[string]string
+	cachedDiskDevicesTime time.Time
 )
 
 // 获取设备数据的最大尝试次数
@@ -289,14 +292,22 @@ func getDiskTotalAndUsed() (total uint64, used uint64) {
 			devices[strconv.Itoa(i)] = v
 		}
 	} else {
-		// 否则使用默认过滤规则
-		diskList, _ := disk.Partitions(false)
-		for _, d := range diskList {
-			fsType := strings.ToLower(d.Fstype)
-			// 不统计 K8s 的虚拟挂载点：https://github.com/shirou/gopsutil/issues/1007
-			if devices[d.Device] == "" && util.ContainsStr(expectDiskFsTypes, fsType) && !strings.Contains(d.Mountpoint, "/var/lib/kubelet") {
-				devices[d.Device] = d.Mountpoint
+		// 检查缓存是否过期（10分钟更新一次分区列表）
+		if cachedDiskDevices != nil && time.Since(cachedDiskDevicesTime) < 10*time.Minute {
+			devices = cachedDiskDevices
+		} else {
+			// 否则使用默认过滤规则
+			diskList, _ := disk.Partitions(false)
+			for _, d := range diskList {
+				fsType := strings.ToLower(d.Fstype)
+				// 不统计 K8s 的虚拟挂载点：https://github.com/shirou/gopsutil/issues/1007
+				if devices[d.Device] == "" && util.ContainsStr(expectDiskFsTypes, fsType) && !strings.Contains(d.Mountpoint, "/var/lib/kubelet") {
+					devices[d.Device] = d.Mountpoint
+				}
 			}
+			// 更新缓存
+			cachedDiskDevices = devices
+			cachedDiskDevicesTime = time.Now()
 		}
 	}
 
@@ -398,7 +409,8 @@ func updateTemperatureStat() {
 			util.Printf(agentConfig.Debug, "host.SensorsTemperatures error: %v, attempt: %d", err, statDataFetchAttempts["Temperatures"])
 		} else {
 			statDataFetchAttempts["Temperatures"] = 0
-			tempStat := []model.SensorTemperature{}
+			// 预分配切片容量，减少扩容操作
+			tempStat := make([]model.SensorTemperature, 0, len(temperatures))
 			for _, t := range temperatures {
 				if t.Temperature > 0 && !util.ContainsStr(sensorIgnoreList, t.SensorKey) {
 					tempStat = append(tempStat, model.SensorTemperature{

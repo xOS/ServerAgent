@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	jsoniter "github.com/json-iterator/go"
@@ -24,6 +25,46 @@ var (
 	// Stream header for StreamID
 	StreamIDHeader = []byte{0xff, 0x05, 0xff, 0x05}
 )
+
+// BufferPool 全局缓冲池，用于复用 byte slice 减少内存分配
+var BufferPool = sync.Pool{
+	New: func() interface{} {
+		buf := make([]byte, DefaultBufferSize)
+		return &buf
+	},
+}
+
+// LargeBufferPool 大缓冲池，用于文件传输等场景
+var LargeBufferPool = sync.Pool{
+	New: func() interface{} {
+		buf := make([]byte, FileBufferSize)
+		return &buf
+	},
+}
+
+// GetBuffer 从缓冲池获取缓冲区
+func GetBuffer() *[]byte {
+	return BufferPool.Get().(*[]byte)
+}
+
+// PutBuffer 将缓冲区放回缓冲池
+func PutBuffer(buf *[]byte) {
+	if buf != nil {
+		BufferPool.Put(buf)
+	}
+}
+
+// GetLargeBuffer 从大缓冲池获取缓冲区
+func GetLargeBuffer() *[]byte {
+	return LargeBufferPool.Get().(*[]byte)
+}
+
+// PutLargeBuffer 将大缓冲区放回缓冲池
+func PutLargeBuffer(buf *[]byte) {
+	if buf != nil {
+		LargeBufferPool.Put(buf)
+	}
+}
 
 func IsWindows() bool {
 	return os.PathSeparator == '\\' && os.PathListSeparator == ';'
