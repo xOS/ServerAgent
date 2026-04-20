@@ -3,7 +3,7 @@ import os
 import time
 
 import requests
-from github import Github
+from github import Auth, Github
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -12,21 +12,22 @@ GITEE_OWNER = os.getenv("GITEE_OWNER", "Ten")
 GITEE_REPO = os.getenv("GITEE_REPO", "ServerAgent")
 
 RETRYABLE_STATUS_CODES = (429, 500, 502, 503, 504)
-MAX_ATTEMPTS = 5
+MAX_ATTEMPTS = 6
 API_TIMEOUT = (10, 60)
-FILE_TIMEOUT = (15, 300)
+FILE_TIMEOUT = (30, 1800)
 
 
 def build_session():
     session = requests.Session()
     retry = Retry(
-        total=5,
-        connect=5,
-        read=5,
-        status=5,
+        total=3,
+        connect=3,
+        read=3,
+        status=3,
         backoff_factor=1.5,
         status_forcelist=RETRYABLE_STATUS_CODES,
-        allowed_methods=frozenset(["GET", "POST", "PUT", "PATCH", "DELETE"]),
+        # Do not auto-retry POST (upload) to avoid duplicate/ambiguous multipart submissions.
+        allowed_methods=frozenset(["GET", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]),
         raise_on_status=False,
     )
     adapter = HTTPAdapter(max_retries=retry, pool_connections=10, pool_maxsize=10)
@@ -79,6 +80,10 @@ def parse_response_message(response):
 
 
 def download_asset(client, url, name):
+    if os.path.exists(name):
+        print(f"Reuse local file {name}")
+        return get_abs_path(name)
+
     tmp_name = f"{name}.part"
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
@@ -116,7 +121,7 @@ def download_asset(client, url, name):
 
 def get_github_latest_release():
     github_token = os.getenv("GITHUB_TOKEN")
-    g = Github(github_token) if github_token else Github()
+    g = Github(auth=Auth.Token(github_token)) if github_token else Github()
     repo = g.get_repo(GITHUB_REPO)
     release = repo.get_latest_release()
     if release:
@@ -233,8 +238,48 @@ def create_or_get_gitee_release_id(client, uri, token, tag, body):
     )
 
 
-def upload_asset_to_gitee(client, asset_api_uri, token, file_path):
+def get_gitee_release_asset_names(client, release_api_uri, release_id, token):
+    list_uri = f"{release_api_uri}/{release_id}/attach_files"
+    response = robust_request(
+        client,
+        "GET",
+        list_uri,
+        params={"access_token": token, "per_page": 100},
+        timeout=API_TIMEOUT,
+    )
+
+    if response.status_code != 200:
+        print(
+            f"List release assets failed with status {response.status_code}: "
+            f"{parse_response_message(response)}"
+        )
+        return set()
+
+    payload = response.json()
+    if not isinstance(payload, list):
+        return set()
+
+    names = set()
+    for asset in payload:
+        if isinstance(asset, dict):
+            name = asset.get("name")
+            if name:
+                names.add(name)
+    return names
+
+
+def upload_asset_to_gitee(
+    client,
+    asset_api_uri,
+    token,
+    file_path,
+    existing_assets,
+    refresh_remote_assets,
+):
     file_name = os.path.basename(file_path)
+    if file_name in existing_assets:
+        print(f"{file_name} already exists on Gitee, skip.")
+        return True
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
@@ -253,7 +298,8 @@ def upload_asset_to_gitee(client, asset_api_uri, token, file_path):
                 asset_info = upload_response.json()
                 asset_name = asset_info.get("name", file_name)
                 print(f"Successfully uploaded {asset_name}!")
-                return
+                existing_assets.add(file_name)
+                return True
 
             message = parse_response_message(upload_response)
             lower_message = message.lower()
@@ -261,7 +307,8 @@ def upload_asset_to_gitee(client, asset_api_uri, token, file_path):
                 "already" in lower_message or "exists" in lower_message or "已存在" in message
             ):
                 print(f"{file_name} already exists on Gitee, skip.")
-                return
+                existing_assets.add(file_name)
+                return True
 
             print(
                 f"Upload {file_name} failed on attempt {attempt}/{MAX_ATTEMPTS}, "
@@ -270,13 +317,23 @@ def upload_asset_to_gitee(client, asset_api_uri, token, file_path):
         except requests.RequestException as err:
             print(f"Upload {file_name} failed on attempt {attempt}/{MAX_ATTEMPTS}: {err}")
 
+        # Timeout may happen after server actually persisted the file. Refresh remote state before retrying.
+        remote_assets = refresh_remote_assets()
+        if file_name in remote_assets:
+            existing_assets.update(remote_assets)
+            print(f"{file_name} detected on Gitee after retry check, skip further retries.")
+            return True
+
         if attempt < MAX_ATTEMPTS:
             delay = retry_delay(attempt)
             print(f"Retrying upload of {file_name} in {delay}s...")
             time.sleep(delay)
             continue
 
-        raise RuntimeError(f"Upload {file_name} failed after {MAX_ATTEMPTS} attempts")
+        print(f"Upload {file_name} failed after {MAX_ATTEMPTS} attempts")
+        return False
+
+    return False
 
 
 def sync_to_gitee(tag: str, body: str, files):
@@ -296,9 +353,33 @@ def sync_to_gitee(tag: str, body: str, files):
 
     print(f"Gitee release id: {release_id}")
     asset_api_uri = f"{release_api_uri}/{release_id}/attach_files"
+    existing_assets = get_gitee_release_asset_names(api_client, release_api_uri, release_id, access_token)
+    print(f"Gitee currently has {len(existing_assets)} assets for this release.")
 
-    for file_path in files:
-        upload_asset_to_gitee(api_client, asset_api_uri, access_token, file_path)
+    def refresh_remote_assets():
+        return get_gitee_release_asset_names(api_client, release_api_uri, release_id, access_token)
+
+    # Upload small files first to maximize completed assets under poor network conditions.
+    sorted_files = sorted(files, key=os.path.getsize)
+    failed_assets = []
+
+    for file_path in sorted_files:
+        ok = upload_asset_to_gitee(
+            api_client,
+            asset_api_uri,
+            access_token,
+            file_path,
+            existing_assets,
+            refresh_remote_assets,
+        )
+        if not ok:
+            failed_assets.append(os.path.basename(file_path))
+
+    if failed_assets:
+        raise RuntimeError(
+            "These assets failed to upload and can be resumed on next run: "
+            + ", ".join(failed_assets)
+        )
 
     # 仅保留最新 Release 以防超出 Gitee 仓库配额
     try:

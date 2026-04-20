@@ -19,13 +19,13 @@ jobs:
         run: |
           python3 -m pip install --upgrade pip
           python3 -m pip install --retries 5 --timeout 120 PyGitHub requests
-          for attempt in 1 2 3; do
+          for attempt in 1 2 3 4 5; do
             python3 .github/workflows/sync.py && exit 0
-            if [ "$attempt" -lt 3 ]; then
+            if [ "$attempt" -lt 5 ]; then
               delay=$((attempt * 60))
               echo "Sync attempt ${attempt} failed, retrying in ${delay}s..."
               sleep "$delay"
             fi
           done
-          echo "Sync failed after 3 attempts"
+          echo "Sync failed after 5 attempts"
           exit 1
