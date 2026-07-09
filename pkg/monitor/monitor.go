@@ -45,9 +45,10 @@ var (
 )
 
 var (
-	netInSpeed, netOutSpeed, netInTransfer, netOutTransfer, lastUpdateNetStats uint64
-	cachedBootTime                                                             time.Time
-	temperatureStat                                                            []model.SensorTemperature
+	netInSpeed, netOutSpeed, netInTransfer, netOutTransfer uint64
+	lastUpdateNetStats                                     time.Time
+	cachedBootTime                                         time.Time
+	temperatureStat                                        []model.SensorTemperature
 	// 磁盘分区缓存，避免频繁查询
 	cachedDiskDevices     map[string]string
 	cachedDiskDevicesTime time.Time
@@ -117,6 +118,11 @@ func GetHost() *model.Host {
 		ret.Arch = hi.KernelArch
 		ret.BootTime = hi.BootTime
 	}
+	if ret.BootTime == 0 {
+		if bootTime, bootErr := host.BootTime(); bootErr == nil && bootTime > 0 {
+			ret.BootTime = bootTime
+		}
+	}
 
 	cpuModelCount := make(map[string]int)
 	if hostDataFetchAttempts["CPU"] < maxDeviceDataFetchAttempts {
@@ -172,7 +178,11 @@ func GetHost() *model.Host {
 		}
 	}
 
-	cachedBootTime = time.Unix(int64(hi.BootTime), 0)
+	if ret.BootTime > 0 {
+		cachedBootTime = time.Unix(int64(ret.BootTime), 0)
+	} else if cachedBootTime.IsZero() {
+		cachedBootTime = time.Now()
+	}
 
 	ret.IP = CachedIP
 	ret.Version = Version
@@ -247,7 +257,16 @@ func GetState(skipConnectionCount bool, skipProcsCount bool) *model.HostState {
 
 	ret.NetInTransfer, ret.NetOutTransfer = netInTransfer, netOutTransfer
 	ret.NetInSpeed, ret.NetOutSpeed = netInSpeed, netOutSpeed
-	ret.Uptime = uint64(time.Since(cachedBootTime).Seconds())
+	if cachedBootTime.IsZero() {
+		if bootTime, err := host.BootTime(); err == nil && bootTime > 0 {
+			cachedBootTime = time.Unix(int64(bootTime), 0)
+		} else {
+			cachedBootTime = time.Now()
+		}
+	}
+	if uptime := time.Since(cachedBootTime); uptime > 0 {
+		ret.Uptime = uint64(uptime.Seconds())
+	}
 	ret.TcpConnCount, ret.UdpConnCount = getConns(skipConnectionCount)
 
 	return &ret
@@ -268,19 +287,41 @@ func TrackNetworkSpeed() {
 					continue
 				}
 			}
-			innerNetInTransfer += v.BytesRecv
-			innerNetOutTransfer += v.BytesSent
+			innerNetInTransfer = saturatingAddUint64(innerNetInTransfer, v.BytesRecv)
+			innerNetOutTransfer = saturatingAddUint64(innerNetOutTransfer, v.BytesSent)
 		}
-		now := uint64(time.Now().Unix())
-		diff := now - lastUpdateNetStats
-		if diff > 0 {
-			netInSpeed = (innerNetInTransfer - netInTransfer) / diff
-			netOutSpeed = (innerNetOutTransfer - netOutTransfer) / diff
+		now := time.Now()
+		if !lastUpdateNetStats.IsZero() {
+			elapsed := now.Sub(lastUpdateNetStats)
+			netInSpeed = networkSpeedDelta(innerNetInTransfer, netInTransfer, elapsed)
+			netOutSpeed = networkSpeedDelta(innerNetOutTransfer, netOutTransfer, elapsed)
+		} else {
+			netInSpeed = 0
+			netOutSpeed = 0
 		}
 		netInTransfer = innerNetInTransfer
 		netOutTransfer = innerNetOutTransfer
 		lastUpdateNetStats = now
 	}
+}
+
+func networkSpeedDelta(current, previous uint64, elapsed time.Duration) uint64 {
+	if elapsed <= 0 || current < previous {
+		return 0
+	}
+	delta := current - previous
+	speed := float64(delta) / elapsed.Seconds()
+	if speed >= float64(^uint64(0)) {
+		return ^uint64(0)
+	}
+	return uint64(speed)
+}
+
+func saturatingAddUint64(a, b uint64) uint64 {
+	if ^uint64(0)-a < b {
+		return ^uint64(0)
+	}
+	return a + b
 }
 
 func getDiskTotalAndUsed() (total uint64, used uint64) {
