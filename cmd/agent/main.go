@@ -28,10 +28,8 @@ import (
 
 	"github.com/xos/serveragent/internal/selfupdate"
 	"github.com/xos/serveragent/model"
-	fm "github.com/xos/serveragent/pkg/fm"
 	"github.com/xos/serveragent/pkg/monitor"
 	"github.com/xos/serveragent/pkg/processgroup"
-	"github.com/xos/serveragent/pkg/pty"
 	"github.com/xos/serveragent/pkg/util"
 	pb "github.com/xos/serveragent/proto"
 )
@@ -193,14 +191,6 @@ func run() {
 		ClientSecret: agentConfig.ClientSecret,
 	}
 
-	// 下载远程命令执行需要的终端
-	if !agentConfig.DisableCommandExecute {
-		go func() {
-			if err := pty.DownloadDependency(); err != nil {
-				debugLogger.Printf("pty 下载依赖失败: %v", err)
-			}
-		}()
-	}
 	// 上报服务器信息
 	go reportStateDaemon()
 	// 更新IP信息
@@ -381,17 +371,11 @@ func doTask(task *pb.Task) {
 		handleCommandTask(task, &result)
 	case model.TaskTypeUpgrade:
 		handleUpgradeTask(task, &result)
-	case model.TaskTypeTerminalGRPC:
-		handleTerminalTask(task)
-		return
 	case model.TaskTypeNAT:
 		handleNATTask(task)
 		return
 	case model.TaskTypeReportHostInfo:
 		reportState(time.Time{})
-		return
-	case model.TaskTypeFM:
-		handleFMTask(task)
 		return
 	case model.TaskTypeKeepalive:
 		return
@@ -613,79 +597,8 @@ func handleCommandTask(task *pb.Task, result *pb.TaskResult) {
 	result.Delay = float32(time.Since(startedAt).Seconds())
 }
 
-type WindowSize struct {
-	Cols uint32
-	Rows uint32
-}
 
-func handleTerminalTask(task *pb.Task) {
-	if agentConfig.DisableCommandExecute {
-		debugLogger.Println("此 Agent 已禁止命令执行")
-		return
-	}
-	var terminal model.TerminalTask
-	err := util.Json.Unmarshal([]byte(task.GetData()), &terminal)
-	if err != nil {
-		debugLogger.Printf("Terminal 任务解析错误: %v", err)
-		return
-	}
 
-	helper, err := createIOStreamHelper("Terminal", terminal.StreamID)
-	if err != nil {
-		debugLogger.Printf(err.Error())
-		return
-	}
-
-	tty, err := pty.Start()
-	if err != nil {
-		debugLogger.Printf("Terminal pty.Start失败 %v", err)
-		return
-	}
-
-	defer func() {
-		err := tty.Close()
-		helper.closeWithLog()
-		debugLogger.Println("terminal exit", terminal.StreamID, err)
-	}()
-	debugLogger.Println("terminal init", terminal.StreamID)
-
-	go func() {
-		bufPtr := util.GetBuffer()
-		defer util.PutBuffer(bufPtr)
-		buf := *bufPtr
-		for {
-			read, err := tty.Read(buf)
-			if err != nil {
-				helper.stream.Send(&pb.IOStreamData{Data: []byte(err.Error())})
-				helper.stream.CloseSend()
-				return
-			}
-			helper.stream.Send(&pb.IOStreamData{Data: buf[:read]})
-		}
-	}()
-
-	for {
-		var remoteData *pb.IOStreamData
-		if remoteData, err = helper.stream.Recv(); err != nil {
-			return
-		}
-		if len(remoteData.Data) == 0 {
-			return
-		}
-		switch remoteData.Data[0] {
-		case 0:
-			tty.Write(remoteData.Data[1:])
-		case 1:
-			decoder := util.Json.NewDecoder(strings.NewReader(string(remoteData.Data[1:])))
-			var resizeMessage WindowSize
-			err := decoder.Decode(&resizeMessage)
-			if err != nil {
-				continue
-			}
-			tty.Setsize(resizeMessage.Cols, resizeMessage.Rows)
-		}
-	}
-}
 
 func handleNATTask(task *pb.Task) {
 	if agentConfig.DisableNat {
@@ -743,42 +656,6 @@ func handleNATTask(task *pb.Task) {
 	}
 }
 
-func handleFMTask(task *pb.Task) {
-	if agentConfig.DisableCommandExecute {
-		debugLogger.Println("此 Agent 已禁止命令执行")
-		return
-	}
-	var fmTask model.TaskFM
-	err := util.Json.Unmarshal([]byte(task.GetData()), &fmTask)
-	if err != nil {
-		debugLogger.Printf("FM 任务解析错误: %v", err)
-		return
-	}
-
-	helper, err := createIOStreamHelper("FM", fmTask.StreamID)
-	if err != nil {
-		debugLogger.Printf(err.Error())
-		return
-	}
-
-	defer func() {
-		helper.closeWithLog()
-		debugLogger.Println("FM exit", fmTask.StreamID, nil)
-	}()
-	debugLogger.Println("FM init", fmTask.StreamID)
-
-	fmc := fm.NewFMClient(helper.stream, debugLogger.Printf)
-	for {
-		var remoteData *pb.IOStreamData
-		if remoteData, err = helper.stream.Recv(); err != nil {
-			return
-		}
-		if len(remoteData.Data) == 0 {
-			return
-		}
-		fmc.DoTask(remoteData)
-	}
-}
 
 func generateQueue(start int, size int) []int {
 	var result []int
