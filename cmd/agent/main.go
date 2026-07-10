@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/blang/semver"
-	"github.com/nezhahq/service"
+	"github.com/xos/serveragent/pkg/service"
 	ping "github.com/prometheus-community/pro-bing"
 	"github.com/shirou/gopsutil/v4/host"
 	"github.com/spf13/cobra"
@@ -118,7 +118,8 @@ func init() {
 	agentCmd.PersistentFlags().BoolVar(&agentConfig.UseIPv6CountryCode, "use-ipv6-countrycode", false, "使用IPv6的位置上报")
 	agentCmd.PersistentFlags().BoolVar(&agentConfig.GPU, "gpu", false, "启用GPU监控")
 	agentCmd.PersistentFlags().BoolVar(&agentConfig.Temperature, "temperature", false, "启用温度监控")
-	agentCmd.PersistentFlags().BoolVar(&agentConfig.UseGiteeToUpgrade, "gitee", false, "使用Gitee获取更新")
+	agentCmd.PersistentFlags().BoolVar(&agentConfig.UseR2ToUpgrade, "r2", false, "使用R2获取更新")
+	agentCmd.PersistentFlags().StringVar(&agentConfig.R2UpdateURL, "r2-url", "https://assets.cnic.eu.org/serveragent", "R2更新源地址")
 	agentCmd.PersistentFlags().Uint32VarP(&agentConfig.IPReportPeriod, "ip-report-period", "u", 30*60, "本地IP更新间隔, 上报频率依旧取决于report-delay的值")
 
 	// Version 参数保持独立，因为它不需要保存到配置文件
@@ -465,19 +466,20 @@ func doSelfUpdate(useLocalVersion bool) {
 	debugLogger.Printf("检查更新: %v", v)
 	provider := selfupdate.GitHub
 	repository := "xOS/ServerAgent"
-	if monitor.CachedCountryCode != "cn" && !agentConfig.UseGiteeToUpgrade {
+	if monitor.CachedCountryCode != "cn" && !agentConfig.UseR2ToUpgrade {
 		provider = selfupdate.GitHub
 	} else {
-		provider = selfupdate.Gitee
+		provider = selfupdate.R2
 		repository = "Ten/ServerAgent"
 	}
 	result, err := selfupdate.Update(context.Background(), selfupdate.Options{
 		Current:    v,
 		Provider:   provider,
+			R2UpdateURL: agentConfig.R2UpdateURL,
 		Repository: repository,
 	})
-	if err != nil && provider == selfupdate.Gitee && errors.Is(err, selfupdate.ErrAssetUnavailable) {
-		debugLogger.Printf("Gitee 发布缺少当前平台文件，回退到 GitHub: %v", err)
+	if err != nil && provider == selfupdate.R2 && errors.Is(err, selfupdate.ErrAssetUnavailable) {
+		debugLogger.Printf("R2 发布缺少当前平台文件，回退到 GitHub: %v", err)
 		result, err = selfupdate.Update(context.Background(), selfupdate.Options{
 			Current:    v,
 			Provider:   selfupdate.GitHub,

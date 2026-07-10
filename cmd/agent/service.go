@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/nezhahq/service"
+	"github.com/xos/serveragent/pkg/service"
 	"github.com/spf13/cobra"
 )
 
@@ -86,7 +86,8 @@ func serviceActions(cmd *cobra.Command, args []string) {
 		{agentConfig.DisableForceUpdate, "--disable-force-update", ""},
 		{agentConfig.UseIPv6CountryCode, "--use-ipv6-countrycode", ""},
 		{agentConfig.GPU, "--gpu", ""},
-		{agentConfig.UseGiteeToUpgrade, "--gitee", ""},
+		{agentConfig.UseR2ToUpgrade, "--r2", ""},
+		{agentConfig.R2UpdateURL != "https://assets.cnic.eu.org/serveragent" && agentConfig.R2UpdateURL != "", "--r2-url", agentConfig.R2UpdateURL},
 		{agentConfig.IPReportPeriod != 30*60, "-u", fmt.Sprint(agentConfig.IPReportPeriod)},
 	}
 

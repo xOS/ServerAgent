@@ -35,7 +35,8 @@ type AgentConfig struct {
 	ReportDelay        int    `yaml:"reportDelay" mapstructure:"reportDelay"`
 	IPReportPeriod     uint32 `yaml:"ipReportPeriod" mapstructure:"ipReportPeriod"`
 	UseIPv6CountryCode bool   `yaml:"useIPv6CountryCode" mapstructure:"useIPv6CountryCode"`
-	UseGiteeToUpgrade  bool   `yaml:"useGiteeToUpgrade" mapstructure:"useGiteeToUpgrade"`
+	UseR2ToUpgrade  bool   `yaml:"useR2ToUpgrade" mapstructure:"useR2ToUpgrade"`
+	R2UpdateURL       string `yaml:"r2UpdateURL" mapstructure:"r2UpdateURL"`
 
 	// 内部字段
 	v *viper.Viper `yaml:"-" mapstructure:"-"`

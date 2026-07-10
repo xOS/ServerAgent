@@ -26,7 +26,7 @@ import (
 
 const (
 	githubAPIBaseURL      = "https://api.github.com"
-	giteeAPIBaseURL       = "https://gitee.com/api/v5"
+	
 	checksumAssetName     = "checksums.txt"
 	maxReleaseMetadata    = 2 << 20
 	maxChecksumFile       = 1 << 20
@@ -46,13 +46,14 @@ type Provider uint8
 
 const (
 	GitHub Provider = iota
-	Gitee
+	R2
 )
 
 type Options struct {
 	Current    semver.Version
 	Provider   Provider
 	Repository string
+	R2UpdateURL string
 }
 
 type Result struct {
@@ -167,6 +168,9 @@ func update(ctx context.Context, config updateConfig) (Result, error) {
 }
 
 func fetchLatestRelease(ctx context.Context, config updateConfig) (release, error) {
+	if config.Provider == R2 {
+		return fetchLatestReleaseR2(ctx, config)
+	}
 	endpoint, err := releaseEndpoint(config.apiBaseURL, config.Repository, config.allowHTTP)
 	if err != nil {
 		return release{}, err
@@ -487,9 +491,6 @@ func artifactName(goos, goarch string) string {
 }
 
 func providerAPIBaseURL(provider Provider) string {
-	if provider == Gitee {
-		return giteeAPIBaseURL
-	}
 	return githubAPIBaseURL
 }
 
@@ -517,4 +518,46 @@ func copyLimited(destination io.Writer, source io.Reader, limit int64) (int64, e
 		return written, fmt.Errorf("data exceeds %d bytes", limit)
 	}
 	return written, nil
+}
+
+func fetchLatestReleaseR2(ctx context.Context, config updateConfig) (release, error) {
+	endpoint := strings.TrimRight(config.R2UpdateURL, "/") + "/index.json"
+	body, err := downloadBytes(ctx, config, endpoint, "application/json", maxReleaseMetadata)
+	if err != nil {
+		return release{}, fmt.Errorf("fetch latest release: %w", err)
+	}
+
+	var payload releaseResponse
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return release{}, fmt.Errorf("decode latest release: %w", err)
+	}
+	latestVersion, err := parseReleaseVersion(payload.TagName)
+	if err != nil {
+		return release{}, err
+	}
+
+	archiveName := artifactName(config.goos, config.goarch)
+	archiveURL := strings.TrimRight(config.R2UpdateURL, "/") + "/" + payload.TagName + "/" + archiveName
+	checksumURL := strings.TrimRight(config.R2UpdateURL, "/") + "/" + payload.TagName + "/checksums.txt"
+
+	req, err := http.NewRequestWithContext(ctx, "HEAD", archiveURL, nil)
+	if err != nil {
+		return release{}, err
+	}
+	resp, err := config.client.Do(req)
+	if err != nil {
+		return release{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return release{}, fmt.Errorf("archive unavailable: %s", resp.Status)
+	}
+
+	return release{
+		Version:     latestVersion,
+		ArchiveName: archiveName,
+		ArchiveURL:  archiveURL,
+		ArchiveSize: resp.ContentLength,
+		ChecksumURL: checksumURL,
+	}, nil
 }
