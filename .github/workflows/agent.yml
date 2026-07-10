@@ -12,6 +12,10 @@ on:
     branches:
       - master
 
+permissions:
+  actions: write
+  contents: write
+
 jobs:
   build-windows:
     strategy:
@@ -189,10 +193,7 @@ jobs:
           artifacts: "checksums.txt,assets/*/*.zip"
           generateReleaseNotes: true
 
-      - name: Trigger sync
+      - name: Trigger Gitee release sync
         env:
-          GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
-          GH_DEBUG: api
-        run: |
-          gh workflow run sync-release.yml
+        run: gh workflow run sync-release.yml -f tag="${GITHUB_REF_NAME}"

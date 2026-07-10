@@ -18,6 +18,12 @@ Agent of Nezha Monitoring
 - Update checks are serialized in-process. If a Gitee release exists but its current-platform asset was not fully synchronized, the agent falls back to the matching GitHub release.
 - `--disable-auto-update` disables startup and periodic checks. `--disable-force-update` ignores update tasks sent by the panel, and `--gitee` selects Gitee as the primary release source.
 
+## Release synchronization
+
+- GitHub Releases are the binary source of truth and Gitee Releases are the preferred mainland China mirror. Standard Cloudflare R2 is not used as the China source because regular R2 custom domains have no mainland network guarantee, while `r2.dev` is explicitly a development endpoint.
+- `.github/workflows/sync-release.yml` requires the `GITEE_TOKEN` repository secret. A new Gitee release remains a prerelease until every GitHub asset is present.
+- Workflow reruns download and upload only missing assets. Ambiguous upload timeouts are confirmed against Gitee's attachment list before any retry, and the release is published only after a final completeness check.
+
 ## Contributors
 
 <!--GAMFC_DELIMITER--><a href="https://github.com/naiba" title="naiba"><img src="https://avatars.githubusercontent.com/u/29243953?v=4" width="50;" alt="naiba"/></a>

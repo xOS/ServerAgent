@@ -2,30 +2,58 @@ name: Sync Release to Gitee
 
 on:
   workflow_dispatch:
-    
+    inputs:
+      tag:
+        description: GitHub Release tag; empty uses the latest stable release
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-gitee-release
+  cancel-in-progress: false
+
 jobs:
   sync-release-to-gitee:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
+      GITHUB_TOKEN: ${{ github.token }}
+      GITHUB_REPO: xOS/ServerAgent
+      GITHUB_RELEASE_TAG: ${{ inputs.tag }}
       GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITEE_OWNER: Ten
+      GITEE_REPO: ServerAgent
+      GITEE_TARGET: master
+      GITEE_UPLOAD_READ_TIMEOUT: "120"
+      GITEE_UPLOAD_ATTEMPTS: "1"
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Sync to Gitee
+
+      - name: Install sync dependency
+        run: python3 -m pip install --disable-pip-version-check --retries 5 --timeout 120 requests
+
+      - name: Test sync logic
+        run: python3 .github/workflows/sync_test.py
+
+      - name: Sync release assets
         run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install --retries 5 --timeout 120 PyGitHub requests
-          for attempt in 1 2 3 4 5; do
-            python3 .github/workflows/sync.py && exit 0
-            if [ "$attempt" -lt 5 ]; then
-              delay=$((attempt * 60))
-              echo "Sync attempt ${attempt} failed, retrying in ${delay}s..."
-              sleep "$delay"
+          for pass in 1 2 3; do
+            echo "Gitee synchronization pass ${pass}/3"
+            if python3 .github/workflows/sync.py; then
+              exit 0
+            fi
+            if [ "${pass}" -lt 3 ]; then
+              delay=$((pass * 30))
+              echo "Pass ${pass} incomplete; retrying missing assets in ${delay}s."
+              sleep "${delay}"
             fi
           done
-          echo "Sync failed after 5 attempts"
+          echo "Gitee synchronization remains incomplete after 3 resumable passes."
           exit 1
