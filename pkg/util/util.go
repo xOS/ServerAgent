@@ -2,7 +2,6 @@ package util
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -63,10 +62,6 @@ func PutLargeBuffer(buf *[]byte) {
 	if buf != nil {
 		LargeBufferPool.Put(buf)
 	}
-}
-
-func IsWindows() bool {
-	return os.PathSeparator == '\\' && os.PathListSeparator == ';'
 }
 
 func Println(enabled bool, v ...interface{}) {

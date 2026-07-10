@@ -1,3 +1,5 @@
+//go:build linux
+
 package stat
 
 // Modified from https://github.com/influxdata/telegraf/blob/master/plugins/inputs/nvidia_smi/nvidia_smi.go

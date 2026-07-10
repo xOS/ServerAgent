@@ -9,6 +9,15 @@ Agent of Nezha Monitoring
 - Linux, macOS, FreeBSD, and Windows ARM64 builds use the official Go 1.26.5 toolchain.
 - Official Go releases only support Windows 7 through Go 1.20. The Windows 7 artifacts therefore depend on the pinned third-party toolchain above; update its version and both archive checksums together.
 
+## Self-update
+
+- The updater is implemented locally in `internal/selfupdate` and uses only the Go standard library plus the project's semantic-version package.
+- Stable releases are queried from GitHub or Gitee. The updater selects the exact `server-agent_<os>_<arch>.zip` asset and never installs an equal or older version.
+- Every archive must match the SHA-256 value published in the same release's `checksums.txt`. Missing checksums, oversized responses, invalid ZIP files, or unexpected executable names abort the update without replacing the current binary.
+- Unix systems stage and atomically rename the new executable. Windows moves the running executable aside, activates the new file, and removes the hidden old file on the next start.
+- Update checks are serialized in-process. If a Gitee release exists but its current-platform asset was not fully synchronized, the agent falls back to the matching GitHub release.
+- `--disable-auto-update` disables startup and periodic checks. `--disable-force-update` ignores update tasks sent by the panel, and `--gitee` selects Gitee as the primary release source.
+
 ## Contributors
 
 <!--GAMFC_DELIMITER--><a href="https://github.com/naiba" title="naiba"><img src="https://avatars.githubusercontent.com/u/29243953?v=4" width="50;" alt="naiba"/></a>

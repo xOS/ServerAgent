@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -16,7 +17,6 @@ import (
 	"time"
 
 	"github.com/blang/semver"
-	"github.com/nezhahq/go-github-selfupdate/selfupdate"
 	"github.com/nezhahq/service"
 	ping "github.com/prometheus-community/pro-bing"
 	"github.com/shirou/gopsutil/v4/host"
@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/resolver"
 
+	"github.com/xos/serveragent/internal/selfupdate"
 	"github.com/xos/serveragent/model"
 	fm "github.com/xos/serveragent/pkg/fm"
 	"github.com/xos/serveragent/pkg/monitor"
@@ -181,6 +182,9 @@ func preRun(cmd *cobra.Command, args []string) {
 
 	// 初始化debug logger
 	debugLogger = util.NewDebugLogger(agentConfig.Debug)
+	if err := selfupdate.Cleanup(); err != nil {
+		debugLogger.Printf("清理旧版本文件失败: %v", err)
+	}
 }
 
 func run() {
@@ -205,7 +209,9 @@ func run() {
 	if _, err := semver.Parse(version); err == nil && !agentConfig.DisableAutoUpdate {
 		doSelfUpdate(true)
 		go func() {
-			for range time.Tick(20 * time.Minute) {
+			ticker := time.NewTicker(20 * time.Minute)
+			defer ticker.Stop()
+			for range ticker.C {
 				doSelfUpdate(true)
 			}
 		}()
@@ -448,28 +454,45 @@ func reportHost() bool {
 
 // doSelfUpdate 执行更新检查 如果更新成功则会结束进程
 func doSelfUpdate(useLocalVersion bool) {
-	v := semver.MustParse("0.4.24")
-	if useLocalVersion {
-		v = semver.MustParse(version)
+	v, err := semver.Parse(version)
+	if err != nil {
+		if useLocalVersion {
+			debugLogger.Printf("当前版本号无效，跳过更新: %q", version)
+			return
+		}
+		v = semver.MustParse("0.4.24")
 	}
 	debugLogger.Printf("检查更新: %v", v)
-	var latest *selfupdate.Release
-	var err error
+	provider := selfupdate.GitHub
+	repository := "xOS/ServerAgent"
 	if monitor.CachedCountryCode != "cn" && !agentConfig.UseGiteeToUpgrade {
-		latest, err = selfupdate.UpdateSelf(v, "xOS/ServerAgent")
+		provider = selfupdate.GitHub
 	} else {
-		latest, err = selfupdate.UpdateSelfGitee(v, "Ten/ServerAgent")
+		provider = selfupdate.Gitee
+		repository = "Ten/ServerAgent"
+	}
+	result, err := selfupdate.Update(context.Background(), selfupdate.Options{
+		Current:    v,
+		Provider:   provider,
+		Repository: repository,
+	})
+	if err != nil && provider == selfupdate.Gitee && errors.Is(err, selfupdate.ErrAssetUnavailable) {
+		debugLogger.Printf("Gitee 发布缺少当前平台文件，回退到 GitHub: %v", err)
+		result, err = selfupdate.Update(context.Background(), selfupdate.Options{
+			Current:    v,
+			Provider:   selfupdate.GitHub,
+			Repository: "xOS/ServerAgent",
+		})
 	}
 	if err != nil {
 		debugLogger.Printf("更新失败: %v", err)
 		return
 	}
 
-	// 添加调试信息
-	debugLogger.Printf("当前版本: %v, 最新版本: %v", v, latest.Version)
+	debugLogger.Printf("当前版本: %v, 最新版本: %v", v, result.Latest)
 
-	if !latest.Version.Equals(v) {
-		debugLogger.Printf("已经更新至: %v, 正在结束进程", latest.Version)
+	if result.Updated {
+		debugLogger.Printf("已经更新至: %v, 正在结束进程", result.Latest)
 		os.Exit(1)
 	}
 }
