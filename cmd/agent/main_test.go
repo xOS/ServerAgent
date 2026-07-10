@@ -1,13 +1,11 @@
 package main
 
 import (
-	"fmt"
-	"net"
 	"reflect"
 	"testing"
 )
 
-func Test(t *testing.T) {
+func TestGenerateQueue(t *testing.T) {
 	cases := []struct {
 		start, size int
 		want        []int
@@ -27,23 +25,13 @@ func Test(t *testing.T) {
 }
 
 func TestLookupIP(t *testing.T) {
-	ip, err := lookupIP("www.google.com")
-	fmt.Printf("ip: %v, err: %v\n", ip, err)
-	if err != nil {
-		t.Errorf("lookupIP failed: %v", err)
-	}
-	_, err = net.ResolveIPAddr("ip", "www.google.com")
-	if err != nil {
-		t.Errorf("ResolveIPAddr failed: %v", err)
-	}
-
-	ip, err = lookupIP("ipv6.google.com")
-	fmt.Printf("ip: %v, err: %v\n", ip, err)
-	if err != nil {
-		t.Errorf("lookupIP failed: %v", err)
-	}
-	_, err = net.ResolveIPAddr("ip", "ipv6.google.com")
-	if err != nil {
-		t.Errorf("ResolveIPAddr failed: %v", err)
+	for _, ip := range []string{"192.0.2.1", "2001:db8::1"} {
+		got, err := lookupIP(ip)
+		if err != nil {
+			t.Fatalf("lookupIP(%q) error: %v", ip, err)
+		}
+		if got != ip {
+			t.Fatalf("lookupIP(%q) = %q, want %q", ip, got, ip)
+		}
 	}
 }

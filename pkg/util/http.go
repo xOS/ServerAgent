@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -20,10 +19,9 @@ func NewSingleStackHTTPClient(httpTimeout, dialTimeout, keepAliveTimeout time.Du
 	}
 
 	transport := &http.Transport{
-		Proxy:             http.ProxyFromEnvironment,
 		ForceAttemptHTTP2: false,
 		DialContext: func(ctx context.Context, network string, addr string) (net.Conn, error) {
-			ip, err := resolveIP(addr, ipv6)
+			ip, err := resolveIP(ctx, addr, ipv6)
 			if err != nil {
 				return nil, err
 			}
@@ -37,15 +35,20 @@ func NewSingleStackHTTPClient(httpTimeout, dialTimeout, keepAliveTimeout time.Du
 	}
 }
 
-func resolveIP(addr string, ipv6 bool) (string, error) {
-	url := strings.Split(addr, ":")
-
-	dnsServers := DNSServersV6
-	if !ipv6 {
-		dnsServers = DNSServersV4
+func resolveIP(ctx context.Context, addr string, ipv6 bool) (string, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", err
 	}
 
-	res, err := net.LookupIP(url[0])
+	dnsServers := DNSServersV6
+	network := "ip6"
+	if !ipv6 {
+		dnsServers = DNSServersV4
+		network = "ip4"
+	}
+
+	res, err := net.DefaultResolver.LookupIP(ctx, network, host)
 	if err != nil {
 		for i := 0; i < len(dnsServers); i++ {
 			r := &net.Resolver{
@@ -57,7 +60,7 @@ func resolveIP(addr string, ipv6 bool) (string, error) {
 					return d.DialContext(ctx, "udp", dnsServers[i])
 				},
 			}
-			res, err = r.LookupIP(context.Background(), "ip", url[0])
+			res, err = r.LookupIP(ctx, network, host)
 			if err == nil {
 				break
 			}
@@ -68,29 +71,12 @@ func resolveIP(addr string, ipv6 bool) (string, error) {
 		return "", err
 	}
 
-	var ipv4Resolved, ipv6Resolved bool
-
-	for i := 0; i < len(res); i++ {
-		ip := res[i].String()
-		if strings.Contains(ip, ".") && !ipv6 {
-			ipv4Resolved = true
-			url[0] = ip
-			break
+	if len(res) == 0 {
+		if ipv6 {
+			return "", errors.New("the AAAA record not resolved")
 		}
-		if strings.Contains(ip, ":") && ipv6 {
-			ipv6Resolved = true
-			url[0] = "[" + ip + "]"
-			break
-		}
-	}
-
-	if ipv6 && !ipv6Resolved {
-		return "", errors.New("the AAAA record not resolved")
-	}
-
-	if !ipv6 && !ipv4Resolved {
 		return "", errors.New("the A record not resolved")
 	}
 
-	return strings.Join(url, ":"), nil
+	return net.JoinHostPort(res[0].String(), port), nil
 }

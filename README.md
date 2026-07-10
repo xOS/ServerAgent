@@ -2,6 +2,13 @@
 
 Agent of Nezha Monitoring
 
+## Build compatibility
+
+- Windows 7 uses the `windows/386` or `windows/amd64` release. These artifacts use the primary `go.mod` dependency set and a checksum-pinned [XTLS/go-win7](https://github.com/XTLS/go-win7) Go 1.26.5 toolchain. The legacy source overlay also covers systems without KB3125574.
+- Windows ARM64 uses the modern dependency set and targets supported Windows 10/11 systems. Windows 7 did not provide an ARM64 platform.
+- Linux, macOS, FreeBSD, and Windows ARM64 builds use the official Go 1.26.5 toolchain.
+- Official Go releases only support Windows 7 through Go 1.20. The Windows 7 artifacts therefore depend on the pinned third-party toolchain above; update its version and both archive checksums together.
+
 ## Contributors
 
 <!--GAMFC_DELIMITER--><a href="https://github.com/naiba" title="naiba"><img src="https://avatars.githubusercontent.com/u/29243953?v=4" width="50;" alt="naiba"/></a>

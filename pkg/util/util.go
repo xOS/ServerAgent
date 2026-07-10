@@ -2,7 +2,6 @@ package util
 
 import (
 	"fmt"
-	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -79,14 +78,6 @@ func Println(enabled bool, v ...interface{}) {
 func Printf(enabled bool, format string, v ...interface{}) {
 	if enabled {
 		Logger.Infof("NG@%s>> "+format, append([]interface{}{time.Now().Format("2006-01-02 15:04:05")}, v...)...)
-	}
-}
-
-func BrowserHeaders() http.Header {
-	return http.Header{
-		"Accept":          {"text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8"},
-		"Accept-Language": {"en,zh-CN;q=0.9,zh;q=0.8"},
-		"User-Agent":      {MacOSChromeUA},
 	}
 }
 

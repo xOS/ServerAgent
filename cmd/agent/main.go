@@ -19,7 +19,6 @@ import (
 	"github.com/nezhahq/go-github-selfupdate/selfupdate"
 	"github.com/nezhahq/service"
 	ping "github.com/prometheus-community/pro-bing"
-	utls "github.com/refraction-networking/utls"
 	"github.com/shirou/gopsutil/v4/host"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
@@ -33,7 +32,6 @@ import (
 	"github.com/xos/serveragent/pkg/processgroup"
 	"github.com/xos/serveragent/pkg/pty"
 	"github.com/xos/serveragent/pkg/util"
-	utlsx "github.com/xos/serveragent/pkg/utls"
 	pb "github.com/xos/serveragent/proto"
 )
 
@@ -59,14 +57,7 @@ var agentCmd = &cobra.Command{
 var (
 	agentConfig model.AgentConfig
 	debugLogger *util.DebugLogger
-	httpClient  = &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-		Timeout: time.Second * 30,
-	}
-
-	hostStatus = new(atomic.Bool)
+	hostStatus  = new(atomic.Bool)
 )
 
 const (
@@ -102,12 +93,7 @@ func init() {
 		return nil, err
 	}
 
-	headers := util.BrowserHeaders()
 	http.DefaultClient.Timeout = time.Second * 30
-	httpClient.Transport = utlsx.NewUTLSHTTPRoundTripperWithProxy(
-		utls.HelloChrome_Auto, new(utls.Config),
-		http.DefaultTransport, nil, &headers,
-	)
 
 	ex, err := os.Executable()
 	if err != nil {

@@ -7,9 +7,7 @@ on:
     branches:
       - master
     paths-ignore:
-      - ".github/workflows/agent.yml"
       - "README.md"
-      - ".goreleaser.yml"
   pull_request:
     branches:
       - master
@@ -19,67 +17,62 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        goarch: [amd64, arm64, 386]
+        include:
+          - goarch: amd64
+            win7: true
+          - goarch: 386
+            win7: true
+          - goarch: arm64
+            win7: false
 
     name: Build Windows artifacts
     runs-on: ubuntu-latest
     env:
       GOOS: windows
       GOARCH: ${{ matrix.goarch }}
+      WIN7_GO_VERSION: "1.26.5"
+      WIN7_GO_SDK_SHA256: "aaec2901eb40be5068edce46267c4a287f2ac38cbfd9bbcb76f0320df7168e2d"
+      WIN7_GO_LEGACY_SHA256: "1fded9947a2da9e3eb8f6dc1754637dbb4f4eb82d6024c227fae870986cf629c"
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set up Go
+      - name: Set up official Go
+        if: ${{ matrix.win7 == false }}
         uses: actions/setup-go@v5
         with:
-          go-version: "1.20.14"
+          go-version: "1.26.5"
 
-      - name: Downgrade dependencies for Go 1.20 (Windows 7 compatible)
+      - name: Set up patched Go for Windows 7
+        if: ${{ matrix.win7 }}
         run: |
-          sed -i 's/^go 1\.[0-9]*/go 1.20/' go.mod
-          # Downgrade golang.org/x/* packages to Go 1.20 compatible versions
-          go mod edit -require=golang.org/x/sys@v0.17.0
-          go mod edit -require=golang.org/x/net@v0.21.0
-          go mod edit -require=golang.org/x/crypto@v0.19.0
-          go mod edit -require=golang.org/x/sync@v0.6.0
-          go mod edit -require=golang.org/x/text@v0.14.0
-          go mod edit -require=golang.org/x/term@v0.17.0
-          go mod edit -require=golang.org/x/mod@v0.14.0
-          go mod edit -require=golang.org/x/tools@v0.17.0
-          go mod edit -require=golang.org/x/exp@v0.0.0-20240205201215-2c58cdc269a3
-          # Downgrade grpc to version compatible with Go 1.20
-          go mod edit -require=google.golang.org/grpc@v1.60.1
-          go mod edit -require=google.golang.org/protobuf@v1.32.0
-          # Downgrade utls and its dependencies to Go 1.20 compatible versions
-          go mod edit -require=github.com/refraction-networking/utls@v1.3.3
-          go mod edit -require=github.com/cloudflare/circl@v1.3.3
-          go mod edit -require=github.com/quic-go/quic-go@v0.33.0
-          go mod edit -require=github.com/spf13/viper@v1.18.2
+          sdk_archive="$RUNNER_TEMP/go-win7-sdk.zip"
+          legacy_archive="$RUNNER_TEMP/go-win7-source-legacy.zip"
+          sdk_dir="$RUNNER_TEMP/go-win7"
+          legacy_dir="$RUNNER_TEMP/go-win7-source-legacy"
+          release_url="https://github.com/XTLS/go-win7/releases/download/patched-$WIN7_GO_VERSION"
 
-      - name: Regenerate proto files for Go 1.20 compatibility
-        run: |
-          # Install protoc
-          sudo apt-get update && sudo apt-get install -y protobuf-compiler
-          # Temporarily unset GOOS/GOARCH to install native tools (not cross-compile)
-          GOOS_SAVED=$GOOS
-          GOARCH_SAVED=$GOARCH
-          unset GOOS GOARCH
-          # Install protoc plugins for the host system
-          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.32.0
-          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.3.0
-          # Restore cross-compile env
-          export GOOS=$GOOS_SAVED
-          export GOARCH=$GOARCH_SAVED
-          # Regenerate proto files
-          GOBIN=$(go env GOPATH)/bin
-          protoc --plugin=protoc-gen-go=$GOBIN/protoc-gen-go \
-            --plugin=protoc-gen-go-grpc=$GOBIN/protoc-gen-go-grpc \
-            --go_out=. --go_opt=paths=source_relative \
-            --go-grpc_out=. --go-grpc_opt=paths=source_relative \
-            proto/server.proto
-          go mod tidy
+          curl --fail --location --silent --show-error \
+            "$release_url/go-for-win7-linux-amd64.zip" \
+            --output "$sdk_archive"
+          curl --fail --location --silent --show-error \
+            "$release_url/source-legacy.zip" \
+            --output "$legacy_archive"
+
+          echo "$WIN7_GO_SDK_SHA256  $sdk_archive" | sha256sum --check -
+          echo "$WIN7_GO_LEGACY_SHA256  $legacy_archive" | sha256sum --check -
+
+          mkdir -p "$sdk_dir" "$legacy_dir"
+          unzip -q "$sdk_archive" -d "$sdk_dir"
+          unzip -q "$legacy_archive" -d "$legacy_dir"
+          cp -R "$legacy_dir/src/." "$sdk_dir/src/"
+
+          echo "$sdk_dir/bin" >> "$GITHUB_PATH"
+          "$sdk_dir/bin/go" version
+
+      - name: Verify dependencies
+        run: go mod verify
 
       - name: Build Test
         if: github.event_name != 'push' || !contains(github.ref, 'refs/tags/')
@@ -148,7 +141,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: "1.26.5"
 
       - name: Build Test
         if: github.event_name != 'push' || !contains(github.ref, 'refs/tags/')

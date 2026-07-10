@@ -65,27 +65,27 @@ func UpdateIP(useIPv6CountryCode bool, period uint32) {
 }
 
 func fetchIP(servers []string, isV6 bool) string {
-	var ip string
-	var resp *http.Response
-	var err error
+	client := httpClientV4
+	if isV6 {
+		client = httpClientV6
+	}
+	return fetchIPWithClient(servers, isV6, client)
+}
 
+func fetchIPWithClient(servers []string, isV6 bool, client *http.Client) string {
 	// 双栈支持参差不齐，不能随机请求，有些 IPv6 取不到 IP
 	for i := 0; i < len(servers); i++ {
-		if isV6 {
-			resp, err = httpGetWithUA(httpClientV6, servers[i])
-		} else {
-			resp, err = httpGetWithUA(httpClientV4, servers[i])
-		}
+		resp, err := httpGetWithUA(client, servers[i])
 		// 遇到单栈机器提前退出
 		if err != nil && strings.Contains(err.Error(), "no route to host") {
-			return ip
+			return ""
 		}
 		if err == nil {
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
+			body, readErr := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if readErr != nil {
 				continue
 			}
-			resp.Body.Close()
 			lines := strings.Split(string(body), "\n")
 			var newIP string
 			for _, line := range lines {
@@ -102,11 +102,10 @@ func fetchIP(servers []string, isV6 bool) string {
 			if !isV6 && !strings.Contains(newIP, ".") {
 				continue
 			}
-			ip = newIP
-			return ip
+			return newIP
 		}
 	}
-	return ip
+	return ""
 }
 
 func httpGetWithUA(client *http.Client, url string) (*http.Response, error) {
