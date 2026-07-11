@@ -115,7 +115,7 @@ func (s *freebsdService) Install() error {
 	}
 	_, err = os.Stat(confPath)
 	if err == nil {
-		return fmt.Errorf("Init already exists: %s", confPath)
+		return fmt.Errorf("service already exists: %s", confPath)
 	}
 
 	f, err := os.Create(confPath)
@@ -184,9 +184,7 @@ func (s *freebsdService) Restart() error {
 }
 
 func (s *freebsdService) Run() error {
-	var err error
-
-	err = s.i.Start(s)
+	err := s.i.Start(s)
 	if err != nil {
 		return err
 	}

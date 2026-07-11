@@ -11,11 +11,9 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log/syslog"
 	"os/exec"
 	"syscall"
-
 )
 
 const defaultLogDirectory = "/var/log"
@@ -103,14 +101,14 @@ func runCommand(command string, readStdout bool, arguments ...string) (int, stri
 	// Darwin: launchctl can fail with a zero exit status,
 	// so check for emtpy stderr
 	if command == "launchctl" {
-		slurp, _ := ioutil.ReadAll(stderr)
+		slurp, _ := io.ReadAll(stderr)
 		if len(slurp) > 0 && !bytes.HasSuffix(slurp, []byte("Operation now in progress\n")) {
 			return 0, "", fmt.Errorf("%q failed with stderr: %s", command, slurp)
 		}
 	}
 
 	if readStdout {
-		out, err := ioutil.ReadAll(stdout)
+		out, err := io.ReadAll(stdout)
 		if err != nil {
 			return 0, "", fmt.Errorf("%q failed while attempting to read stdout: %v", command, err)
 		} else if len(out) > 0 {

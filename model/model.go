@@ -1,50 +1,50 @@
 package model
 
 import (
+	"errors"
 	"os"
 
-	"github.com/spf13/viper"
 	"sigs.k8s.io/yaml"
 )
 
+const DefaultR2UpdateURL = "https://assets.cnic.eu.org/serveragent"
+
 type AgentConfig struct {
 	// 监控配置
-	HardDrivePartitionAllowlist []string        `yaml:"harddrivePartitionAllowlist" mapstructure:"harddrivePartitionAllowlist"`
-	NICAllowlist                map[string]bool `yaml:"nicAllowlist" mapstructure:"nicAllowlist"`
-	DNS                         []string        `yaml:"dns" mapstructure:"dns"`
-	GPU                         bool            `yaml:"gpu" mapstructure:"gpu"`
-	Temperature                 bool            `yaml:"temperature" mapstructure:"temperature"`
-	Debug                       bool            `yaml:"debug" mapstructure:"debug"`
+	HardDrivePartitionAllowlist []string        `yaml:"harddrivePartitionAllowlist"`
+	NICAllowlist                map[string]bool `yaml:"nicAllowlist"`
+	DNS                         []string        `yaml:"dns"`
+	GPU                         bool            `yaml:"gpu"`
+	Temperature                 bool            `yaml:"temperature"`
+	Debug                       bool            `yaml:"debug"`
 
 	// 连接配置
-	Server       string `yaml:"server" mapstructure:"server"`
-	ClientSecret string `yaml:"clientSecret" mapstructure:"clientSecret"`
-	TLS          bool   `yaml:"tls" mapstructure:"tls"`
-	InsecureTLS  bool   `yaml:"insecureTLS" mapstructure:"insecureTLS"`
+	Server       string `yaml:"server"`
+	ClientSecret string `yaml:"clientSecret"`
+	TLS          bool   `yaml:"tls"`
+	InsecureTLS  bool   `yaml:"insecureTLS"`
 
 	// 功能开关
-	SkipConnectionCount   bool `yaml:"skipConnectionCount" mapstructure:"skipConnectionCount"`
-	SkipProcsCount        bool `yaml:"skipProcsCount" mapstructure:"skipProcsCount"`
-	DisableAutoUpdate     bool `yaml:"disableAutoUpdate" mapstructure:"disableAutoUpdate"`
-	DisableForceUpdate    bool `yaml:"disableForceUpdate" mapstructure:"disableForceUpdate"`
-	DisableCommandExecute bool `yaml:"disableCommandExecute" mapstructure:"disableCommandExecute"`
-	DisableNat            bool `yaml:"disableNat" mapstructure:"disableNat"`
-	DisableSendQuery      bool `yaml:"disableSendQuery" mapstructure:"disableSendQuery"`
+	SkipConnectionCount   bool `yaml:"skipConnectionCount"`
+	SkipProcsCount        bool `yaml:"skipProcsCount"`
+	DisableAutoUpdate     bool `yaml:"disableAutoUpdate"`
+	DisableForceUpdate    bool `yaml:"disableForceUpdate"`
+	DisableCommandExecute bool `yaml:"disableCommandExecute"`
+	DisableNat            bool `yaml:"disableNat"`
+	DisableSendQuery      bool `yaml:"disableSendQuery"`
 
 	// 其他配置
-	ReportDelay        int    `yaml:"reportDelay" mapstructure:"reportDelay"`
-	IPReportPeriod     uint32 `yaml:"ipReportPeriod" mapstructure:"ipReportPeriod"`
-	UseIPv6CountryCode bool   `yaml:"useIPv6CountryCode" mapstructure:"useIPv6CountryCode"`
-	UseR2ToUpgrade  bool   `yaml:"useR2ToUpgrade" mapstructure:"useR2ToUpgrade"`
-	R2UpdateURL       string `yaml:"r2UpdateURL" mapstructure:"r2UpdateURL"`
+	ReportDelay        int    `yaml:"reportDelay"`
+	IPReportPeriod     uint32 `yaml:"ipReportPeriod"`
+	UseIPv6CountryCode bool   `yaml:"useIPv6CountryCode"`
+	UseR2ToUpgrade     bool   `yaml:"useR2ToUpgrade"`
+	R2UpdateURL        string `yaml:"r2UpdateURL"`
 
 	// 内部字段
-	v *viper.Viper `yaml:"-" mapstructure:"-"`
+	configPath string `yaml:"-"`
 }
 
-// SetDefaults 设置默认值
-func (c *AgentConfig) SetDefaults() {
-	// 连接配置默认值
+func (c *AgentConfig) applyDefaults() {
 	if c.Server == "" {
 		c.Server = "localhost:2222"
 	}
@@ -54,38 +54,47 @@ func (c *AgentConfig) SetDefaults() {
 	if c.IPReportPeriod == 0 {
 		c.IPReportPeriod = 30 * 60 // 30分钟
 	}
-	// Debug 默认为 true
-	if !c.Debug {
-		c.Debug = true
+	if c.R2UpdateURL == "" {
+		c.R2UpdateURL = DefaultR2UpdateURL
 	}
 }
 
 // Read 从给定的文件目录加载配置文件
 func (c *AgentConfig) Read(path string) error {
-	// 先设置默认值
-	c.SetDefaults()
+	*c = AgentConfig{
+		Debug:          true,
+		Server:         "localhost:2222",
+		ReportDelay:    1,
+		IPReportPeriod: 30 * 60,
+		R2UpdateURL:    DefaultR2UpdateURL,
+		configPath:     path,
+	}
 
-	c.v = viper.New()
-	c.v.SetConfigFile(path)
-	err := c.v.ReadInConfig()
-	if err != nil {
-		// 如果配置文件不存在，使用默认值
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	err = c.v.Unmarshal(c)
 	if err != nil {
 		return err
 	}
-
-	// 读取配置后再次确保默认值
-	c.SetDefaults()
+	if err := yaml.Unmarshal(data, c); err != nil {
+		return err
+	}
+	c.configPath = path
+	c.applyDefaults()
 	return nil
 }
 
 func (c *AgentConfig) Save() error {
+	if c.configPath == "" {
+		return errors.New("configuration path is empty")
+	}
 	data, err := yaml.Marshal(c)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(c.v.ConfigFileUsed(), data, os.ModePerm)
+	if err := os.WriteFile(c.configPath, data, 0600); err != nil {
+		return err
+	}
+	return os.Chmod(c.configPath, 0600)
 }

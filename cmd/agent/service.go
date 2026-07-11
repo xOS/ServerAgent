@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/xos/serveragent/pkg/service"
 	"github.com/spf13/cobra"
+	"github.com/xos/serveragent/model"
+	"github.com/xos/serveragent/pkg/service"
 )
 
 type AgentCliFlags struct {
@@ -87,7 +88,7 @@ func serviceActions(cmd *cobra.Command, args []string) {
 		{agentConfig.UseIPv6CountryCode, "--use-ipv6-countrycode", ""},
 		{agentConfig.GPU, "--gpu", ""},
 		{agentConfig.UseR2ToUpgrade, "--r2", ""},
-		{agentConfig.R2UpdateURL != "https://assets.cnic.eu.org/serveragent" && agentConfig.R2UpdateURL != "", "--r2-url", agentConfig.R2UpdateURL},
+		{agentConfig.R2UpdateURL != model.DefaultR2UpdateURL && agentConfig.R2UpdateURL != "", "--r2-url", agentConfig.R2UpdateURL},
 		{agentConfig.IPReportPeriod != 30*60, "-u", fmt.Sprint(agentConfig.IPReportPeriod)},
 	}
 

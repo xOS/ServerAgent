@@ -17,10 +17,10 @@ import (
 	"time"
 
 	"github.com/blang/semver"
-	"github.com/xos/serveragent/pkg/service"
 	ping "github.com/prometheus-community/pro-bing"
 	"github.com/shirou/gopsutil/v4/host"
 	"github.com/spf13/cobra"
+	"github.com/xos/serveragent/pkg/service"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -33,8 +33,6 @@ import (
 	"github.com/xos/serveragent/pkg/util"
 	pb "github.com/xos/serveragent/proto"
 )
-
-// AgentCliParam 已废弃，所有参数现在都在 AgentConfig 中统一管理
 
 var (
 	version     string
@@ -117,14 +115,16 @@ func init() {
 	agentCmd.PersistentFlags().BoolVar(&agentConfig.GPU, "gpu", false, "启用GPU监控")
 	agentCmd.PersistentFlags().BoolVar(&agentConfig.Temperature, "temperature", false, "启用温度监控")
 	agentCmd.PersistentFlags().BoolVar(&agentConfig.UseR2ToUpgrade, "r2", false, "使用R2获取更新")
-	agentCmd.PersistentFlags().StringVar(&agentConfig.R2UpdateURL, "r2-url", "https://assets.cnic.eu.org/serveragent", "R2更新源地址")
+	agentCmd.PersistentFlags().StringVar(&agentConfig.R2UpdateURL, "r2-url", model.DefaultR2UpdateURL, "R2更新源地址")
 	agentCmd.PersistentFlags().Uint32VarP(&agentConfig.IPReportPeriod, "ip-report-period", "u", 30*60, "本地IP更新间隔, 上报频率依旧取决于report-delay的值")
 
 	// Version 参数保持独立，因为它不需要保存到配置文件
 	var showVersion bool
 	agentCmd.Flags().BoolVarP(&showVersion, "version", "v", false, "查看当前版本号")
 
-	agentConfig.Read(filepath.Dir(ex) + "/config.yml")
+	if err := agentConfig.Read(filepath.Join(filepath.Dir(ex), "config.yml")); err != nil {
+		log.Fatalf("读取配置文件失败: %v", err)
+	}
 
 	monitor.InitConfig(&agentConfig)
 }
@@ -156,6 +156,11 @@ func persistPreRun(cmd *cobra.Command, args []string) {
 			panic(fmt.Sprintf("与当前系统不匹配，当前运行 %s_%s, 需要下载 %s_%s", runtime.GOOS, arch, runtime.GOOS, hostArch))
 		}
 	}
+
+	debugLogger = util.NewDebugLogger(agentConfig.Debug)
+	if err := selfupdate.Cleanup(); err != nil {
+		debugLogger.Printf("清理旧版本文件失败: %v", err)
+	}
 }
 
 func preRun(cmd *cobra.Command, args []string) {
@@ -179,11 +184,6 @@ func preRun(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// 初始化debug logger
-	debugLogger = util.NewDebugLogger(agentConfig.Debug)
-	if err := selfupdate.Cleanup(); err != nil {
-		debugLogger.Printf("清理旧版本文件失败: %v", err)
-	}
 }
 
 func run() {
@@ -222,7 +222,6 @@ func run() {
 	}
 
 	for {
-		timeOutCtx, cancel := context.WithTimeout(context.Background(), networkTimeOut)
 		var securityOption grpc.DialOption
 		if agentConfig.TLS {
 			if agentConfig.InsecureTLS {
@@ -233,17 +232,15 @@ func run() {
 		} else {
 			securityOption = grpc.WithTransportCredentials(insecure.NewCredentials())
 		}
-		conn, err = grpc.DialContext(timeOutCtx, agentConfig.Server, securityOption, grpc.WithPerRPCCredentials(&auth))
+		conn, err = grpc.NewClient(agentConfig.Server, securityOption, grpc.WithPerRPCCredentials(&auth))
 		if err != nil {
 			debugLogger.Printf("与面板建立连接失败: %v", err)
-			cancel()
 			retry()
 			continue
 		}
-		cancel()
 		client = pb.NewServerServiceClient(conn)
 		// 第一步注册
-		timeOutCtx, cancel = context.WithTimeout(context.Background(), networkTimeOut)
+		timeOutCtx, cancel := context.WithTimeout(context.Background(), networkTimeOut)
 		_, err = client.ReportSystemInfo(timeOutCtx, monitor.GetHost().PB())
 		if err != nil {
 			debugLogger.Printf("上报系统信息失败: %v", err)
@@ -366,7 +363,7 @@ func doTask(task *pb.Task) {
 	case model.TaskTypeICMPPing:
 		handleIcmpPingTask(task, &result)
 	case model.TaskTypeTCPPing:
-		handleTcpPingTask(task, &result)
+		handleTCPPingTask(task, &result)
 	case model.TaskTypeCommand:
 		handleCommandTask(task, &result)
 	case model.TaskTypeUpgrade:
@@ -383,7 +380,9 @@ func doTask(task *pb.Task) {
 		debugLogger.Printf("不支持的任务: %v", task)
 		return
 	}
-	client.ReportTask(context.Background(), &result)
+	if _, err := client.ReportTask(context.Background(), &result); err != nil {
+		debugLogger.Printf("上报任务结果失败: %v", err)
+	}
 }
 
 // reportStateDaemon 向server上报状态信息
@@ -457,10 +456,10 @@ func doSelfUpdate(useLocalVersion bool) {
 		repository = "Ten/ServerAgent"
 	}
 	result, err := selfupdate.Update(context.Background(), selfupdate.Options{
-		Current:    v,
-		Provider:   provider,
-			R2UpdateURL: agentConfig.R2UpdateURL,
-		Repository: repository,
+		Current:     v,
+		Provider:    provider,
+		R2UpdateURL: agentConfig.R2UpdateURL,
+		Repository:  repository,
 	})
 	if err != nil && provider == selfupdate.R2 && errors.Is(err, selfupdate.ErrAssetUnavailable) {
 		debugLogger.Printf("R2 发布缺少当前平台文件，回退到 GitHub: %v", err)
@@ -490,7 +489,7 @@ func handleUpgradeTask(*pb.Task, *pb.TaskResult) {
 	doSelfUpdate(false)
 }
 
-func handleTcpPingTask(task *pb.Task, result *pb.TaskResult) {
+func handleTCPPingTask(task *pb.Task, result *pb.TaskResult) {
 	if agentConfig.DisableSendQuery {
 		result.Data = "此 Agent 已禁止发送请求"
 		return
@@ -559,47 +558,59 @@ func handleCommandTask(task *pb.Task, result *pb.TaskResult) {
 		return
 	}
 	startedAt := time.Now()
-	endCh := make(chan struct{})
 	pg, err := processgroup.NewProcessExitGroup()
 	if err != nil {
 		// 进程组创建失败，直接退出
 		result.Data = err.Error()
 		return
 	}
-	timeout := time.NewTimer(time.Hour * 2)
 	cmd := processgroup.NewCommand(task.GetData())
 	var b bytes.Buffer
 	cmd.Stdout = &b
+	cmd.Stderr = &b
 	cmd.Env = os.Environ()
 	if err = cmd.Start(); err != nil {
 		result.Data = err.Error()
+		_ = pg.Close()
 		return
 	}
-	pg.AddProcess(cmd)
-	go func() {
-		select {
-		case <-timeout.C:
-			result.Data = "任务执行超时\n"
-			close(endCh)
-			pg.Dispose()
-		case <-endCh:
-			timeout.Stop()
+	defer pg.Close()
+	if err = pg.AddProcess(cmd); err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		result.Data = fmt.Sprintf("创建命令进程组失败: %v", err)
+		return
+	}
+
+	waitDone := make(chan error, 1)
+	go func() { waitDone <- cmd.Wait() }()
+	timeout := time.NewTimer(2 * time.Hour)
+	defer timeout.Stop()
+
+	timedOut := false
+	select {
+	case err = <-waitDone:
+		if disposeErr := pg.Dispose(); disposeErr != nil {
+			debugLogger.Printf("清理命令进程组失败: %v", disposeErr)
 		}
-	}()
-	if err = cmd.Wait(); err != nil {
-		result.Data += fmt.Sprintf("%s\n%s", b.String(), err.Error())
+	case <-timeout.C:
+		timedOut = true
+		if disposeErr := pg.Dispose(); disposeErr != nil {
+			debugLogger.Printf("终止超时命令失败: %v", disposeErr)
+		}
+		err = <-waitDone
+	}
+
+	if timedOut {
+		result.Data = "任务执行超时\n" + b.String()
+	} else if err != nil {
+		result.Data = fmt.Sprintf("%s\n%s", b.String(), err.Error())
 	} else {
-		close(endCh)
 		result.Data = b.String()
 		result.Successful = true
 	}
-	pg.Dispose()
 	result.Delay = float32(time.Since(startedAt).Seconds())
 }
-
-
-
-
 func handleNATTask(task *pb.Task) {
 	if agentConfig.DisableNat {
 		debugLogger.Println("此 Agent 已禁止内网穿透")
@@ -615,7 +626,7 @@ func handleNATTask(task *pb.Task) {
 
 	helper, err := createIOStreamHelper("NAT", nat.StreamID)
 	if err != nil {
-		debugLogger.Printf(err.Error())
+		debugLogger.Printf("NAT 初始化失败: %v", err)
 		return
 	}
 
@@ -639,11 +650,14 @@ func handleNATTask(task *pb.Task) {
 		for {
 			read, err := conn.Read(buf)
 			if err != nil {
-				helper.stream.Send(&pb.IOStreamData{Data: []byte(err.Error())})
-				helper.stream.CloseSend()
+				_ = helper.stream.Send(&pb.IOStreamData{Data: []byte(err.Error())})
+				_ = helper.stream.CloseSend()
 				return
 			}
-			helper.stream.Send(&pb.IOStreamData{Data: buf[:read]})
+			if err := helper.stream.Send(&pb.IOStreamData{Data: buf[:read]}); err != nil {
+				debugLogger.Printf("NAT 发送数据失败: %v", err)
+				return
+			}
 		}
 	}()
 
@@ -652,11 +666,26 @@ func handleNATTask(task *pb.Task) {
 		if remoteData, err = helper.stream.Recv(); err != nil {
 			return
 		}
-		conn.Write(remoteData.Data)
+		if err := writeAll(conn, remoteData.Data); err != nil {
+			debugLogger.Printf("NAT 写入本地连接失败: %v", err)
+			return
+		}
 	}
 }
 
-
+func writeAll(conn net.Conn, data []byte) error {
+	for len(data) > 0 {
+		written, err := conn.Write(data)
+		if err != nil {
+			return err
+		}
+		if written == 0 {
+			return errors.New("connection wrote zero bytes")
+		}
+		data = data[written:]
+	}
+	return nil
+}
 func generateQueue(start int, size int) []int {
 	var result []int
 	for i := start; i < start+size; i++ {
@@ -669,18 +698,18 @@ func generateQueue(start int, size int) []int {
 	return result
 }
 
-func lookupIP(hostOrIp string) (string, error) {
-	if net.ParseIP(hostOrIp) == nil {
-		ips, err := dnsResolver.LookupIPAddr(context.Background(), hostOrIp)
+func lookupIP(hostOrIP string) (string, error) {
+	if net.ParseIP(hostOrIP) == nil {
+		ips, err := dnsResolver.LookupIPAddr(context.Background(), hostOrIP)
 		if err != nil {
 			return "", err
 		}
 		if len(ips) == 0 {
-			return "", fmt.Errorf("无法解析 %s", hostOrIp)
+			return "", fmt.Errorf("无法解析 %s", hostOrIP)
 		}
 		return ips[0].IP.String(), nil
 	}
-	return hostOrIp, nil
+	return hostOrIP, nil
 }
 
 // IOStreamHelper handles common IOStream operations
@@ -720,5 +749,5 @@ func (h *IOStreamHelper) sendStreamID() error {
 
 func (h *IOStreamHelper) closeWithLog() {
 	err := h.stream.CloseSend()
-	debugLogger.Println(fmt.Sprintf("%s exit %s %v", h.taskName, h.streamID, err))
+	debugLogger.Printf("%s exit %s %v", h.taskName, h.streamID, err)
 }

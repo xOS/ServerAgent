@@ -44,10 +44,7 @@ func isRCS() bool {
 
 		re := regexp.MustCompile(`::sysinit:.*rcS`)
 		matches := re.FindStringSubmatch(contents)
-		if len(matches) > 0 {
-			return true
-		}
-		return false
+		return len(matches) > 0
 	}
 	return false
 }
@@ -74,7 +71,7 @@ func (s *rcs) Platform() string {
 }
 
 // todo
-var errNoUserServiceRCS = errors.New("User services are not supported on rcS.")
+var errNoUserServiceRCS = errors.New("user services are not supported on rcS")
 
 func (s *rcs) configPath() (cp string, err error) {
 	if s.Option.bool(optionUserService, optionUserServiceDefault) {
@@ -101,7 +98,7 @@ func (s *rcs) Install() error {
 	}
 	_, err = os.Stat(confPath)
 	if err == nil {
-		return fmt.Errorf("Init already exists: %s", confPath)
+		return fmt.Errorf("service already exists: %s", confPath)
 	}
 
 	f, err := os.Create(confPath)

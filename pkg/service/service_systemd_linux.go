@@ -147,7 +147,7 @@ func (s *systemd) Install() error {
 	}
 	_, err = os.Stat(confPath)
 	if err == nil {
-		return fmt.Errorf("Init already exists: %s", confPath)
+		return fmt.Errorf("service already exists: %s", confPath)
 	}
 
 	f, err := os.OpenFile(confPath, os.O_WRONLY|os.O_CREATE, 0644)

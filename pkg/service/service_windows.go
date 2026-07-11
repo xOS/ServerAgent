@@ -231,8 +231,12 @@ func lowPrivMgr() (*mgr.Mgr, error) {
 }
 
 func lowPrivSvc(m *mgr.Mgr, name string) (*mgr.Service, error) {
+	namePtr, err := windows.UTF16PtrFromString(name)
+	if err != nil {
+		return nil, err
+	}
 	h, err := windows.OpenService(
-		m.Handle, syscall.StringToUTF16Ptr(name),
+		m.Handle, namePtr,
 		windows.SERVICE_QUERY_CONFIG|windows.SERVICE_QUERY_STATUS|windows.SERVICE_START|windows.SERVICE_STOP)
 	if err != nil {
 		return nil, err
@@ -394,9 +398,9 @@ func (ws *windowsService) Run() error {
 		return err
 	}
 
-	sigChan := make(chan os.Signal)
-
+	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt)
+	defer signal.Stop(sigChan)
 
 	<-sigChan
 
@@ -518,7 +522,7 @@ func (ws *windowsService) stopWait(s *mgr.Service) error {
 				return err
 			}
 		case <-timeout:
-			break
+			return fmt.Errorf("service %s did not stop before timeout", ws.Name)
 		}
 	}
 	return nil

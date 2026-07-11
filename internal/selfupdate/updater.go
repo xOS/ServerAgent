@@ -25,8 +25,8 @@ import (
 )
 
 const (
-	githubAPIBaseURL      = "https://api.github.com"
-	
+	githubAPIBaseURL = "https://api.github.com"
+
 	checksumAssetName     = "checksums.txt"
 	maxReleaseMetadata    = 2 << 20
 	maxChecksumFile       = 1 << 20
@@ -50,9 +50,9 @@ const (
 )
 
 type Options struct {
-	Current    semver.Version
-	Provider   Provider
-	Repository string
+	Current     semver.Version
+	Provider    Provider
+	Repository  string
 	R2UpdateURL string
 }
 
@@ -540,7 +540,7 @@ func fetchLatestReleaseR2(ctx context.Context, config updateConfig) (release, er
 	archiveURL := strings.TrimRight(config.R2UpdateURL, "/") + "/" + payload.TagName + "/" + archiveName
 	checksumURL := strings.TrimRight(config.R2UpdateURL, "/") + "/" + payload.TagName + "/checksums.txt"
 
-	req, err := http.NewRequestWithContext(ctx, "HEAD", archiveURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, archiveURL, nil)
 	if err != nil {
 		return release{}, err
 	}

@@ -3,17 +3,17 @@
 package processgroup
 
 import (
+	"errors"
 	"os/exec"
-	"sync"
 	"syscall"
 )
 
 type ProcessExitGroup struct {
-	cmds []*exec.Cmd
+	pgids []int
 }
 
-func NewProcessExitGroup() (ProcessExitGroup, error) {
-	return ProcessExitGroup{}, nil
+func NewProcessExitGroup() (*ProcessExitGroup, error) {
+	return &ProcessExitGroup{}, nil
 }
 
 func NewCommand(arg string) *exec.Cmd {
@@ -23,32 +23,24 @@ func NewCommand(arg string) *exec.Cmd {
 }
 
 func (g *ProcessExitGroup) Dispose() error {
-	var wg sync.WaitGroup
-	wg.Add(len(g.cmds))
-
-	for _, c := range g.cmds {
-		go func(c *exec.Cmd) {
-			defer wg.Done()
-			killChildProcess(c)
-		}(c)
+	var firstErr error
+	for _, pgid := range g.pgids {
+		if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) && firstErr == nil {
+			firstErr = err
+		}
 	}
-
-	wg.Wait()
-	return nil
+	return firstErr
 }
 
 func (g *ProcessExitGroup) AddProcess(cmd *exec.Cmd) error {
-	g.cmds = append(g.cmds, cmd)
+	pgid, err := syscall.Getpgid(cmd.Process.Pid)
+	if err != nil {
+		return err
+	}
+	g.pgids = append(g.pgids, pgid)
 	return nil
 }
 
-func killChildProcess(c *exec.Cmd) {
-	pgid, err := syscall.Getpgid(c.Process.Pid)
-	if err != nil {
-		// Fall-back on error. Kill the main process only.
-		c.Process.Kill()
-	}
-	// Kill the whole process group.
-	syscall.Kill(-pgid, syscall.SIGTERM)
-	c.Wait()
+func (g *ProcessExitGroup) Close() error {
+	return nil
 }

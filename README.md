@@ -12,17 +12,21 @@ Agent of Nezha Monitoring
 ## Self-update
 
 - The updater is implemented locally in `internal/selfupdate` and uses only the Go standard library plus the project's semantic-version package.
-- Stable releases are queried from GitHub or Gitee. The updater selects the exact `server-agent_<os>_<arch>.zip` asset and never installs an equal or older version.
+- Stable releases are queried from GitHub or Cloudflare R2. The updater selects the exact `server-agent_<os>_<arch>.zip` asset and never installs an equal or older version.
 - Every archive must match the SHA-256 value published in the same release's `checksums.txt`. Missing checksums, oversized responses, invalid ZIP files, or unexpected executable names abort the update without replacing the current binary.
 - Unix systems stage and atomically rename the new executable. Windows moves the running executable aside, activates the new file, and removes the hidden old file on the next start.
-- Update checks are serialized in-process. If a Gitee release exists but its current-platform asset was not fully synchronized, the agent falls back to the matching GitHub release.
-- `--disable-auto-update` disables startup and periodic checks. `--disable-force-update` ignores update tasks sent by the panel, and `--gitee` selects Gitee as the primary release source.
+- Update checks are serialized in-process. If an R2 release lacks the current-platform asset, the agent falls back to the matching GitHub release.
+- `--disable-auto-update` disables startup and periodic checks. `--disable-force-update` ignores update tasks sent by the panel, and `--r2` selects R2 as the primary release source. `--r2-url` overrides its public base URL.
 
 ## Release synchronization
 
-- GitHub Releases are the binary source of truth and Gitee Releases are the preferred mainland China mirror. Standard Cloudflare R2 is not used as the China source because regular R2 custom domains have no mainland network guarantee, while `r2.dev` is explicitly a development endpoint.
-- `.github/workflows/sync-release.yml` requires the `GITEE_TOKEN` repository secret. A new Gitee release remains a prerelease until every GitHub asset is present.
-- Workflow reruns download and upload only missing assets. Ambiguous upload timeouts are confirmed against Gitee's attachment list before any retry, and the release is published only after a final completeness check.
+- GitHub Releases are the binary source of truth. `.github/workflows/sync-release.yml` copies versioned archives and `checksums.txt` to Cloudflare R2, then publishes `index.json` last.
+- The workflow requires `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ACCOUNT_ID`, and `R2_BUCKET` secrets. Version directories are immutable and retained for rollback; the latest index is never cached.
+
+## Localized dependencies
+
+- `pkg/service` is a project-local fork of `github.com/nezhahq/service` at revision `5f38afb105e9`, retained because the Agent needs customized Windows 7 and Darwin behavior. Its zlib license is preserved in `pkg/service/LICENSE`.
+- `internal/selfupdate` is the local updater implementation. It replaced the previous external self-update dependency and is covered by archive, checksum, downgrade, and replacement tests.
 
 ## Contributors
 

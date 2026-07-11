@@ -59,7 +59,7 @@ func (s *upstart) Platform() string {
 // Upstart has some support for user services in graphical sessions.
 // Due to the mix of actual support for user services over versions, just don't bother.
 // Upstart will be replaced by systemd in most cases anyway.
-var errNoUserServiceUpstart = errors.New("User services are not supported on Upstart.")
+var errNoUserServiceUpstart = errors.New("user services are not supported on Upstart")
 
 func (s *upstart) configPath() (cp string, err error) {
 	if s.Option.bool(optionUserService, optionUserServiceDefault) {
@@ -132,7 +132,7 @@ func (s *upstart) Install() error {
 	}
 	_, err = os.Stat(confPath)
 	if err == nil {
-		return fmt.Errorf("Init already exists: %s", confPath)
+		return fmt.Errorf("service already exists: %s", confPath)
 	}
 
 	f, err := os.Create(confPath)

@@ -386,26 +386,26 @@ func getDiskTotalAndUsed() (total uint64, used uint64) {
 
 func getConns(skipConnectionCount bool) (tcpConnCount, udpConnCount uint64) {
 	if !skipConnectionCount {
-		ss_err := true
+		ssErr := true
 		if runtime.GOOS == "linux" {
-			tcpStat, err_tcp := goss.ConnectionsWithProtocol(goss.AF_INET, syscall.IPPROTO_TCP)
-			udpStat, err_udp := goss.ConnectionsWithProtocol(goss.AF_INET, syscall.IPPROTO_UDP)
-			if err_tcp == nil && err_udp == nil {
-				ss_err = false
+			tcpStat, errTCP := goss.ConnectionsWithProtocol(goss.AF_INET, syscall.IPPROTO_TCP)
+			udpStat, errUDP := goss.ConnectionsWithProtocol(goss.AF_INET, syscall.IPPROTO_UDP)
+			if errTCP == nil && errUDP == nil {
+				ssErr = false
 				tcpConnCount = uint64(len(tcpStat))
 				udpConnCount = uint64(len(udpStat))
 			}
 			if strings.Contains(CachedIP, ":") {
-				tcpStat6, err_tcp := goss.ConnectionsWithProtocol(goss.AF_INET6, syscall.IPPROTO_TCP)
-				udpStat6, err_udp := goss.ConnectionsWithProtocol(goss.AF_INET6, syscall.IPPROTO_UDP)
-				if err_tcp == nil && err_udp == nil {
-					ss_err = false
+				tcpStat6, errTCP := goss.ConnectionsWithProtocol(goss.AF_INET6, syscall.IPPROTO_TCP)
+				udpStat6, errUDP := goss.ConnectionsWithProtocol(goss.AF_INET6, syscall.IPPROTO_UDP)
+				if errTCP == nil && errUDP == nil {
+					ssErr = false
 					tcpConnCount += uint64(len(tcpStat6))
 					udpConnCount += uint64(len(udpStat6))
 				}
 			}
 		}
-		if ss_err {
+		if ssErr {
 			conns, _ := net.Connections("all")
 			for i := 0; i < len(conns); i++ {
 				switch conns[i].Type {

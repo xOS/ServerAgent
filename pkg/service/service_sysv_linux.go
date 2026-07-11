@@ -42,7 +42,7 @@ func (s *sysv) Platform() string {
 	return s.platform
 }
 
-var errNoUserServiceSystemV = errors.New("User services are not supported on SystemV.")
+var errNoUserServiceSystemV = errors.New("user services are not supported on SystemV")
 
 func (s *sysv) configPath() (cp string, err error) {
 	if s.Option.bool(optionUserService, optionUserServiceDefault) {
@@ -69,7 +69,7 @@ func (s *sysv) Install() error {
 	}
 	_, err = os.Stat(confPath)
 	if err == nil {
-		return fmt.Errorf("Init already exists: %s", confPath)
+		return fmt.Errorf("service already exists: %s", confPath)
 	}
 
 	f, err := os.Create(confPath)

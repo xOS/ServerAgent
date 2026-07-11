@@ -34,6 +34,11 @@ func NewProcessExitGroup() (*ProcessExitGroup, error) {
 		uintptr(unsafe.Pointer(&info)),
 		uint32(unsafe.Sizeof(info)))
 
+	if err != nil {
+		windows.CloseHandle(job)
+		return nil, err
+	}
+
 	return &ProcessExitGroup{jobHandle: job}, nil
 }
 
@@ -59,13 +64,6 @@ func (g *ProcessExitGroup) AddProcess(cmd *exec.Cmd) error {
 }
 
 func (g *ProcessExitGroup) Dispose() error {
-	defer func() {
-		windows.CloseHandle(g.jobHandle)
-		for _, proc := range g.procs {
-			windows.CloseHandle(proc)
-		}
-	}()
-
 	if err := windows.TerminateJobObject(g.jobHandle, 1); err != nil {
 		// Fall-back on error. Kill the main process only.
 		for _, cmd := range g.cmds {
@@ -76,9 +74,25 @@ func (g *ProcessExitGroup) Dispose() error {
 
 	// wait for job to be terminated
 	status, err := windows.WaitForSingleObject(g.jobHandle, windows.INFINITE)
-	if status != windows.WAIT_OBJECT_0 {
+	if err != nil {
 		return err
 	}
+	if status != windows.WAIT_OBJECT_0 {
+		return fmt.Errorf("unexpected job wait status: %d", status)
+	}
 
+	return nil
+}
+
+func (g *ProcessExitGroup) Close() error {
+	for _, proc := range g.procs {
+		windows.CloseHandle(proc)
+	}
+	g.procs = nil
+	if g.jobHandle != 0 {
+		err := windows.CloseHandle(g.jobHandle)
+		g.jobHandle = 0
+		return err
+	}
 	return nil
 }

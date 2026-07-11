@@ -9,6 +9,6 @@ import (
 type Writer = syslog.Writer
 
 var (
-	NewSyslog = syslog.New
+	NewSyslog       = syslog.New
 	NewSyslogLogger = syslog.NewLogger
 )

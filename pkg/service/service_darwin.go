@@ -18,8 +18,6 @@ import (
 	"time"
 )
 
-const maxPathSize = 32 * 1024
-
 const (
 	version                   = "darwin-launchd"
 	defaultDarwinLogDirectory = "/var/log"
@@ -96,7 +94,7 @@ func (s *darwinLaunchdService) getHomeDir() (string, error) {
 	// alternate methods
 	homeDir := os.Getenv("HOME") // *nix
 	if homeDir == "" {
-		return "", errors.New("User home directory not found.")
+		return "", errors.New("user home directory not found")
 	}
 	return homeDir, nil
 }
@@ -159,7 +157,7 @@ func (s *darwinLaunchdService) Install() error {
 	}
 	_, err = os.Stat(confPath)
 	if err == nil {
-		return fmt.Errorf("Init already exists: %s", confPath)
+		return fmt.Errorf("service already exists: %s", confPath)
 	}
 
 	if s.userService {

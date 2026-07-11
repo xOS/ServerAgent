@@ -18,7 +18,7 @@ func GetGPUModel() ([]string, error) {
 
 	for _, card := range gi.GraphicsCards {
 		if card.DeviceInfo == nil {
-			return nil, errors.New("Cannot find device info")
+			return nil, errors.New("cannot find device info")
 		}
 		gpuModel = append(gpuModel, card.DeviceInfo.Product.Name)
 	}

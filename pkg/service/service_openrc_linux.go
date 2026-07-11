@@ -30,10 +30,7 @@ func isOpenRC() bool {
 
 		re := regexp.MustCompile(`::sysinit:.*openrc.*sysinit`)
 		matches := re.FindStringSubmatch(contents)
-		if len(matches) > 0 {
-			return true
-		}
-		return false
+		return len(matches) > 0
 	}
 	return false
 }
@@ -91,7 +88,7 @@ func (s *openrc) Install() error {
 	}
 	_, err = os.Stat(confPath)
 	if err == nil {
-		return fmt.Errorf("Init already exists: %s", confPath)
+		return fmt.Errorf("service already exists: %s", confPath)
 	}
 
 	f, err := os.Create(confPath)
