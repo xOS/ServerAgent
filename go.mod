@@ -15,7 +15,7 @@ require (
 	github.com/shirou/gopsutil/v4 v4.26.6
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/sys v0.47.0
-	google.golang.org/grpc v1.82.0
+	google.golang.org/grpc v1.83.1
 	google.golang.org/protobuf v1.36.11
 	sigs.k8s.io/yaml v1.6.0
 )
