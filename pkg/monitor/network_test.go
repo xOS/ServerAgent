@@ -36,3 +36,49 @@ func TestSaturatingAddUint64(t *testing.T) {
 		t.Fatalf("saturatingAddUint64(max, 1) = %d, want max", got)
 	}
 }
+
+func TestIsNetInterfaceExcluded(t *testing.T) {
+	tests := []struct {
+		name     string
+		excluded bool
+	}{
+		{"eth0", false},
+		{"ens3", false},
+		{"enp0s3", false},
+		{"eno1", false},
+		{"wlan0", false},
+		{"lo", true},
+		{"lo0", true},
+		{"docker0", true},
+		{"veth12345", true},
+		{"br-abc123", true},
+		{"vmbr0", true},
+		{"virbr0", true},
+		{"virbr0-nic", true},
+		{"wg0", true},
+		{"wg-quick", true},
+		{"tailscale0", true},
+		{"zt0", true},
+		{"cni0", true},
+		{"cni-podman0", true},
+		{"flannel.1", true},
+		{"cali1234", true},
+		{"cilium_host", true},
+		{"tap0", true},
+		{"dummy0", true},
+		{"sing-box", true},
+		{"clash", true},
+		{"meta", true},
+		{"vEthernet (WSL)", true},
+		{"utun1", true},
+		{"bridge0", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isNetInterfaceExcluded(tt.name); got != tt.excluded {
+				t.Fatalf("isNetInterfaceExcluded(%q) = %v, want %v", tt.name, got, tt.excluded)
+			}
+		})
+	}
+}

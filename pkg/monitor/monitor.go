@@ -36,6 +36,10 @@ var (
 	}
 	excludeNetInterfaces = []string{
 		"lo", "tun", "docker", "veth", "br-", "vmbr", "vnet", "kube",
+		"wg", "tailscale", "zt", "virbr", "cni", "flannel", "cali",
+		"cilium", "podman", "tap", "dummy", "bond", "sing-box", "clash",
+		"meta", "awdl", "p2p", "llw", "gif", "stf", "vethernet", "npcap",
+		"bridge", "br0", "br1",
 	}
 	sensorIgnoreList = []string{
 		"PMU tcal", // the calibration sensor on arm macs, value is fixed
@@ -47,6 +51,7 @@ var (
 var (
 	netInSpeed, netOutSpeed, netInTransfer, netOutTransfer uint64
 	lastUpdateNetStats                                     time.Time
+	cachedNetIOCounters                                    map[string]net.IOCountersStat
 	cachedBootTime                                         time.Time
 	temperatureStat                                        []model.SensorTemperature
 	// 磁盘分区缓存，避免频繁查询
@@ -272,37 +277,82 @@ func GetState(skipConnectionCount bool, skipProcsCount bool) *model.HostState {
 	return &ret
 }
 
+func isNetInterfaceExcluded(name string) bool {
+	lower := strings.ToLower(name)
+	return util.ContainsStr(excludeNetInterfaces, lower)
+}
+
+func isInterfaceMonitored(name string) bool {
+	if agentConfig != nil && len(agentConfig.NICAllowlist) > 0 {
+		return agentConfig.NICAllowlist[name]
+	}
+	return !isNetInterfaceExcluded(name)
+}
+
 // TrackNetworkSpeed NIC监控，统计流量与速度
 func TrackNetworkSpeed() {
-	var innerNetInTransfer, innerNetOutTransfer uint64
 	nc, err := net.IOCounters(true)
-	if err == nil {
-		for _, v := range nc {
-			if len(agentConfig.NICAllowlist) > 0 {
-				if !agentConfig.NICAllowlist[v.Name] {
-					continue
-				}
-			} else {
-				if util.ContainsStr(excludeNetInterfaces, v.Name) {
-					continue
-				}
-			}
-			innerNetInTransfer = saturatingAddUint64(innerNetInTransfer, v.BytesRecv)
-			innerNetOutTransfer = saturatingAddUint64(innerNetOutTransfer, v.BytesSent)
-		}
-		now := time.Now()
-		if !lastUpdateNetStats.IsZero() {
-			elapsed := now.Sub(lastUpdateNetStats)
-			netInSpeed = networkSpeedDelta(innerNetInTransfer, netInTransfer, elapsed)
-			netOutSpeed = networkSpeedDelta(innerNetOutTransfer, netOutTransfer, elapsed)
-		} else {
-			netInSpeed = 0
-			netOutSpeed = 0
-		}
-		netInTransfer = innerNetInTransfer
-		netOutTransfer = innerNetOutTransfer
-		lastUpdateNetStats = now
+	if err != nil {
+		return
 	}
+
+	now := time.Now()
+	var deltaIn, deltaOut uint64
+	currentCounters := make(map[string]net.IOCountersStat, len(nc))
+
+	// 首帧初始化：首次运行建立各网卡快照基线，避免开机历史流量产生异常增量
+	if lastUpdateNetStats.IsZero() {
+		var initialIn, initialOut uint64
+		for _, v := range nc {
+			if !isInterfaceMonitored(v.Name) {
+				continue
+			}
+			currentCounters[v.Name] = v
+			initialIn = saturatingAddUint64(initialIn, v.BytesRecv)
+			initialOut = saturatingAddUint64(initialOut, v.BytesSent)
+		}
+		cachedNetIOCounters = currentCounters
+		netInTransfer = initialIn
+		netOutTransfer = initialOut
+		netInSpeed = 0
+		netOutSpeed = 0
+		lastUpdateNetStats = now
+		return
+	}
+
+	for _, v := range nc {
+		if !isInterfaceMonitored(v.Name) {
+			continue
+		}
+		currentCounters[v.Name] = v
+
+		if lastStat, exists := cachedNetIOCounters[v.Name]; exists {
+			// 仅对已建立基线的网卡计算增量
+			if v.BytesRecv >= lastStat.BytesRecv {
+				deltaIn = saturatingAddUint64(deltaIn, v.BytesRecv-lastStat.BytesRecv)
+			} else {
+				// 网卡计数器发生重置（如网卡重载/重启）
+				deltaIn = saturatingAddUint64(deltaIn, v.BytesRecv)
+			}
+
+			if v.BytesSent >= lastStat.BytesSent {
+				deltaOut = saturatingAddUint64(deltaOut, v.BytesSent-lastStat.BytesSent)
+			} else {
+				deltaOut = saturatingAddUint64(deltaOut, v.BytesSent)
+			}
+		}
+		// 运行期间新增的网卡：仅建立初始快照基线，不把历史累计值作为瞬时增量算入，防止瞬间网速脉冲和虚高总量
+	}
+
+	cachedNetIOCounters = currentCounters
+
+	elapsed := now.Sub(lastUpdateNetStats)
+	netInSpeed = networkSpeedDelta(deltaIn, 0, elapsed)
+	netOutSpeed = networkSpeedDelta(deltaOut, 0, elapsed)
+
+	netInTransfer = saturatingAddUint64(netInTransfer, deltaIn)
+	netOutTransfer = saturatingAddUint64(netOutTransfer, deltaOut)
+	lastUpdateNetStats = now
 }
 
 func networkSpeedDelta(current, previous uint64, elapsed time.Duration) uint64 {
