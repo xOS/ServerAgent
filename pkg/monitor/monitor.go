@@ -1,9 +1,15 @@
 package monitor
 
 import (
+	"cmp"
+	"context"
 	"fmt"
+	"io/fs"
+	"math"
 	"os"
 	"os/exec"
+	"path"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
@@ -41,10 +47,6 @@ var (
 		"meta", "awdl", "p2p", "llw", "gif", "stf", "vethernet", "npcap",
 		"bridge", "br0", "br1",
 	}
-	sensorIgnoreList = []string{
-		"PMU tcal", // the calibration sensor on arm macs, value is fixed
-		"noname",
-	}
 	agentConfig *model.AgentConfig
 )
 
@@ -53,7 +55,6 @@ var (
 	lastUpdateNetStats                                     time.Time
 	cachedNetIOCounters                                    map[string]net.IOCountersStat
 	cachedBootTime                                         time.Time
-	temperatureStat                                        []model.SensorTemperature
 	// 磁盘分区缓存，避免频繁查询
 	cachedDiskDevices     map[string]string
 	cachedDiskDevicesTime time.Time
@@ -70,14 +71,18 @@ var hostDataFetchAttempts = map[string]int{
 
 // 获取状态数据的尝试次数，Key 为 HostState 的属性名
 var statDataFetchAttempts = map[string]int{
-	"CPU":          0,
-	"Load":         0,
-	"GPU":          0,
-	"Temperatures": 0,
+	"CPU":  0,
+	"Load": 0,
+	"GPU":  0,
 }
 
+const temperatureRetryInterval = 10 * time.Second
+
 var (
-	updateTempStatus = new(atomic.Bool)
+	temperatureStat     atomic.Pointer[[]model.SensorTemperature]
+	updatingTemperature atomic.Bool
+	temperatureRetryAt  time.Time                        // accessed only by the active collector
+	sensorIgnoreList    = []string{"PMU tcal", "noname"} // includes the fixed Apple Silicon calibration sensor
 )
 
 func InitConfig(cfg *model.AgentConfig) {
@@ -88,40 +93,20 @@ func InitConfig(cfg *model.AgentConfig) {
 func GetHost() *model.Host {
 	var ret model.Host
 
-	var cpuType string
 	hi, err := host.Info()
 	if err != nil {
 		util.Printf(agentConfig.Debug, "host.Info error: %v", err)
 	} else {
-		if hi.VirtualizationRole == "guest" {
-			cpuType = "Virtual"
-			ret.Virtualization = hi.VirtualizationSystem
-			util.Printf(agentConfig.Debug, "Detected virtualization: Role=%s, System=%s", hi.VirtualizationRole, hi.VirtualizationSystem)
-		} else {
-			cpuType = "Physical"
-			if hi.VirtualizationSystem != "" {
-				ret.Virtualization = hi.VirtualizationSystem
-				util.Printf(agentConfig.Debug, "Non-guest virtualization detected: Role=%s, System=%s", hi.VirtualizationRole, hi.VirtualizationSystem)
-			} else {
-				ret.Virtualization = ""
-				util.Printf(agentConfig.Debug, "No virtualization detected: Role=%s", hi.VirtualizationRole)
-			}
-		}
-
-		// 如果主要检测方法失败，尝试备用检测方法
-		if ret.Virtualization == "" {
-			fallbackResult := detectVirtualizationFallback()
-			if fallbackResult != "" {
-				ret.Virtualization = fallbackResult
-				cpuType = "Virtual"
-				util.Printf(agentConfig.Debug, "Fallback detection found: %s", fallbackResult)
-			}
-		}
-
 		ret.Platform = hi.Platform
 		ret.PlatformVersion = hi.PlatformVersion
 		ret.Arch = hi.KernelArch
 		ret.BootTime = hi.BootTime
+	}
+	cpuType := "Physical"
+	ret.Virtualization = detectVirtualization(hi)
+	if ret.Virtualization != "" {
+		cpuType = "Virtual"
+		util.Printf(agentConfig.Debug, "Detected virtualization: %s", ret.Virtualization)
 	}
 	if ret.BootTime == 0 {
 		if bootTime, bootErr := host.BootTime(); bootErr == nil && bootTime > 0 {
@@ -254,8 +239,10 @@ func GetState(skipConnectionCount bool, skipProcsCount bool) *model.HostState {
 	}
 
 	if agentConfig.Temperature {
-		go updateTemperatureStat()
-		ret.Temperatures = temperatureStat
+		if temperatures := temperatureStat.Load(); temperatures != nil {
+			ret.Temperatures = *temperatures
+		}
+		go updateTemperatureStat(agentConfig.Debug)
 	}
 
 	ret.GPU = updateGPUStat()
@@ -487,107 +474,492 @@ func updateGPUStat() float64 {
 	return 0
 }
 
-func updateTemperatureStat() {
-	if !updateTempStatus.CompareAndSwap(false, true) {
+func updateTemperatureStat(debug bool) {
+	if !updatingTemperature.CompareAndSwap(false, true) {
 		return
 	}
-	defer updateTempStatus.Store(false)
-
-	if statDataFetchAttempts["Temperatures"] < maxDeviceDataFetchAttempts {
-		temperatures, err := sensors.SensorsTemperatures()
-		if err != nil {
-			statDataFetchAttempts["Temperatures"]++
-			util.Printf(agentConfig.Debug, "host.SensorsTemperatures error: %v, attempt: %d", err, statDataFetchAttempts["Temperatures"])
-		} else {
-			statDataFetchAttempts["Temperatures"] = 0
-			// 预分配切片容量，减少扩容操作
-			tempStat := make([]model.SensorTemperature, 0, len(temperatures))
-			for _, t := range temperatures {
-				if t.Temperature > 0 && !util.ContainsStr(sensorIgnoreList, t.SensorKey) {
-					tempStat = append(tempStat, model.SensorTemperature{
-						Name:        t.SensorKey,
-						Temperature: t.Temperature,
-					})
-				}
-			}
-
-			sort.Slice(tempStat, func(i, j int) bool {
-				return tempStat[i].Name < tempStat[j].Name
-			})
-
-			temperatureStat = tempStat
-		}
+	defer updatingTemperature.Store(false)
+	if time.Now().Before(temperatureRetryAt) {
+		return
 	}
+
+	temperatures, err := readTemperatures()
+	if len(temperatures) == 0 {
+		temperatureRetryAt = time.Now().Add(temperatureRetryInterval)
+		if err != nil {
+			util.Printf(debug, "温度采集失败: %v", err)
+			return
+		}
+		util.Println(debug, "未发现可读的温度传感器")
+	} else {
+		temperatureRetryAt = time.Time{}
+	}
+
+	sort.SliceStable(temperatures, func(i, j int) bool {
+		return temperatures[i].Name < temperatures[j].Name
+	})
+	temperatureStat.Store(&temperatures)
 }
 
-// detectVirtualizationFallback 使用多种方法尝试检测虚拟化环境
-func detectVirtualizationFallback() string {
-	// 方法1: 检查 /proc/cpuinfo 中的虚拟化标识 (Linux)
-	if runtime.GOOS == "linux" {
-		if cpuinfo, err := os.ReadFile("/proc/cpuinfo"); err == nil {
-			cpuinfoStr := string(cpuinfo)
-			if strings.Contains(cpuinfoStr, "QEMU") {
-				return "QEMU"
-			}
-			if strings.Contains(cpuinfoStr, "VMware") {
-				return "VMware"
-			}
-			if strings.Contains(cpuinfoStr, "VirtualBox") {
-				return "VirtualBox"
-			}
-			if strings.Contains(cpuinfoStr, "Xen") {
-				return "Xen"
-			}
-			if strings.Contains(cpuinfoStr, "Microsoft") {
-				return "Hyper-V"
-			}
+func readTemperatures() ([]model.SensorTemperature, error) {
+	if runtime.GOOS == "linux" || runtime.GOOS == "android" {
+		root := os.Getenv("HOST_SYS")
+		if root == "" {
+			root = "/sys"
 		}
+		return readSysfsTemperatures(root)
+	}
 
-		// 方法2: 检查 /sys/class/dmi/id/product_name
-		if productName, err := os.ReadFile("/sys/class/dmi/id/product_name"); err == nil {
-			product := strings.TrimSpace(string(productName))
-			if strings.Contains(product, "VMware") {
-				return "VMware"
-			}
-			if strings.Contains(product, "VirtualBox") {
-				return "VirtualBox"
-			}
-			if strings.Contains(product, "QEMU") {
-				return "QEMU"
-			}
+	readings, err := sensors.SensorsTemperatures()
+	var temperatures []model.SensorTemperature
+	for _, reading := range readings {
+		// Some backends, including macOS SMC, return zero for unavailable sensors.
+		if reading.Temperature > 0 && validTemperature(reading.SensorKey, reading.Temperature) {
+			temperatures = append(temperatures, model.SensorTemperature{
+				Name:        reading.SensorKey,
+				Temperature: reading.Temperature,
+			})
 		}
+	}
+	return temperatures, err
+}
 
-		// 方法3: 检查容器环境
-		if _, err := os.Stat("/.dockerenv"); err == nil {
-			return "Docker"
+func validTemperature(name string, celsius float64) bool {
+	return name != "" && !util.ContainsStr(sensorIgnoreList, name) && celsius >= -273.15 && !math.IsInf(celsius, 0)
+}
+
+func readSysfsTemperatures(root string) ([]model.SensorTemperature, error) {
+	sys := os.DirFS(root)
+	var readErr error
+	read := func(file, name string, scale float64) (model.SensorTemperature, bool) {
+		value, err := readSysfsTemperature(sys, file, scale)
+		if err != nil {
+			if readErr == nil {
+				readErr = err
+			}
+			return model.SensorTemperature{}, false
 		}
-		if controlGroup, err := os.ReadFile("/proc/1/cgroup"); err == nil {
-			if strings.Contains(string(controlGroup), "docker") {
+		// U30 Air exposes a zero placeholder for the charging interface.
+		if (name == "interface" && value == 0) || !validTemperature(name, value) {
+			return model.SensorTemperature{}, false
+		}
+		return model.SensorTemperature{Name: name, Temperature: value}, true
+	}
+
+	var temperatures []model.SensorTemperature
+	seenInputs := make(map[string]bool)
+	thermalMirrors := make(map[string]int)
+	for _, pattern := range []string{"class/hwmon/hwmon*/temp*_input", "class/hwmon/hwmon*/device/temp*_input"} {
+		files, _ := fs.Glob(sys, pattern)
+		for _, file := range files {
+			resolved, resolveErr := filepath.EvalSymlinks(filepath.Join(root, filepath.FromSlash(file)))
+			if resolveErr == nil && seenInputs[resolved] {
+				continue
+			}
+
+			dir := path.Dir(file)
+			hwmon := dir
+			if path.Base(dir) == "device" {
+				hwmon = path.Dir(dir)
+			}
+			chip := readTrimmedFile(sys, path.Join(dir, "name"))
+			if chip == "" && dir != hwmon {
+				chip = readTrimmedFile(sys, path.Join(hwmon, "name"))
+			}
+			if chip == "" {
+				chip = path.Base(hwmon)
+			}
+			label := readTrimmedFile(sys, strings.TrimSuffix(file, "_input")+"_label")
+			name := chip
+			if label != "" {
+				name += "_" + strings.ReplaceAll(strings.ToLower(label), " ", "_")
+			}
+			reading, ok := read(file, name, 1000)
+			if !ok {
+				continue
+			}
+			if resolveErr == nil {
+				seenInputs[resolved] = true
+			}
+			temperatures = append(temperatures, reading)
+			device, _ := os.Readlink(filepath.Join(root, filepath.FromSlash(hwmon), "device"))
+			if strings.HasPrefix(filepath.Base(device), "thermal_zone") {
+				thermalMirrors[strings.ReplaceAll(chip, "-", "_")]++
+			}
+		}
+	}
+
+	zones, _ := fs.Glob(sys, "class/thermal/thermal_zone*/temp")
+	var zoneTemperatures []model.SensorTemperature
+	zoneCounts := make(map[string]int)
+	for _, file := range zones {
+		dir := path.Dir(file)
+		name := readTrimmedFile(sys, path.Join(dir, "type"))
+		if name == "" {
+			name = path.Base(dir)
+		}
+		zoneCounts[strings.ReplaceAll(name, "-", "_")]++
+		if reading, ok := read(file, name, 1000); ok {
+			zoneTemperatures = append(zoneTemperatures, reading)
+		}
+	}
+	for _, reading := range zoneTemperatures {
+		// The kernel can export a group of thermal zones under one hwmon name.
+		// Keep the thermal readings if hwmon did not cover the whole group.
+		chip := strings.ReplaceAll(reading.Name, "-", "_")
+		if thermalMirrors[chip] < zoneCounts[chip] {
+			temperatures = append(temperatures, reading)
+		}
+	}
+
+	supplies, _ := fs.Glob(sys, "class/power_supply/*/temp")
+	for _, file := range supplies {
+		dir := path.Dir(file)
+		if readTrimmedFile(sys, path.Join(dir, "present")) == "0" {
+			continue
+		}
+		if reading, ok := read(file, path.Base(dir), 10); ok {
+			temperatures = append(temperatures, reading)
+		}
+	}
+	return temperatures, readErr
+}
+
+func readTrimmedFile(sys fs.FS, file string) string {
+	data, _ := fs.ReadFile(sys, file)
+	return strings.TrimSpace(string(data))
+}
+
+func readSysfsTemperature(sys fs.FS, file string, scale float64) (float64, error) {
+	data, err := fs.ReadFile(sys, file)
+	if err != nil {
+		return 0, err
+	}
+	value, err := strconv.ParseFloat(strings.TrimSpace(string(data)), 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", file, err)
+	}
+	return value / scale, nil
+}
+
+func detectVirtualization(info *host.InfoStat) string {
+	var guest string
+	if info != nil && info.VirtualizationRole == "guest" {
+		guest = virtualizationName(info.VirtualizationSystem)
+	}
+
+	switch runtime.GOOS {
+	case "linux", "android":
+		root, proc, sys := os.Getenv("HOST_ROOT"), os.Getenv("HOST_PROC"), os.Getenv("HOST_SYS")
+		var detected string
+		if runtime.GOOS == "linux" && root == "" && proc == "" && sys == "" {
+			detected = virtualizationName(virtualizationCommand("systemd-detect-virt"))
+		}
+		return detectLinuxVirtualization(
+			os.DirFS(cmp.Or(root, "/")), os.DirFS(cmp.Or(proc, "/proc")),
+			os.DirFS(cmp.Or(sys, "/sys")), detected, guest,
+		)
+	case "windows":
+		const bios = `HKLM\HARDWARE\DESCRIPTION\System\BIOS`
+		values := virtualizationCommand("reg.exe", "query", bios)
+		vendor, product, firmware := windowsVirtualizationDMI(values)
+		return cmp.Or(detectVirtualMachine(vendor, product, firmware), guest)
+	case "freebsd":
+		if virtualizationCommand("sysctl", "-n", "security.jail.jailed") == "1" {
+			return "FreeBSD Jail"
+		}
+		return cmp.Or(virtualizationName(virtualizationCommand("sysctl", "-n", "kern.vm_guest")), guest)
+	case "darwin":
+		product := virtualizationCommand("sysctl", "-n", "hw.model")
+		return cmp.Or(detectVirtualMachine("", product, ""), guest)
+	}
+	return guest
+}
+
+func virtualizationCommand(name string, args ...string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, name, args...).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func detectLinuxVirtualization(root, proc, sys fs.FS, detected, guest string) string {
+	if container := detectLinuxContainer(root, proc); container != "" {
+		if container == "Container" && isContainerVirtualization(detected) {
+			return detected
+		}
+		return container
+	}
+	if detected != "" && detected != "Virtual Machine" {
+		return detected
+	}
+
+	if _, err := fs.Stat(proc, "vz"); err == nil {
+		// OpenVZ exposes the beancounters directory on the host.
+		if _, err := fs.Stat(proc, "bc"); os.IsNotExist(err) {
+			return "OpenVZ"
+		}
+	}
+
+	const dmi = "class/dmi/id/"
+	vendor := readTrimmedFile(sys, dmi+"sys_vendor")
+	product := readTrimmedFile(sys, dmi+"product_name")
+	if strings.EqualFold(vendor, "Amazon EC2") && strings.Contains(strings.ToLower(product), ".metal") {
+		return ""
+	}
+	xenType := readTrimmedFile(sys, "hypervisor/type")
+	xenHost := strings.Contains(readTrimmedFile(proc, "xen/capabilities"), "control_d")
+	if xenType == "xen" {
+		const xenFeatureDom0 = 1 << 11
+		features, _ := strconv.ParseUint(readTrimmedFile(sys, "hypervisor/properties/features"), 16, 32)
+		xenHost = xenHost || features&xenFeatureDom0 != 0
+		if !xenHost {
+			return "Xen"
+		}
+	}
+	machine := detectVirtualMachine(vendor, product, readTrimmedFile(sys, dmi+"bios_vendor"))
+	clocksource := readTrimmedFile(sys, "devices/system/clocksource/clocksource0/current_clocksource")
+	if machine == "QEMU" && clocksource == "kvm-clock" {
+		return "KVM"
+	}
+	if machine != "" && (machine != "Xen" || !xenHost) {
+		return machine
+	}
+	if xenHost {
+		return ""
+	}
+
+	switch clocksource {
+	case "kvm-clock":
+		return "KVM"
+	case "hyperv_clocksource_tsc_page", "hyperv_clocksource_msr":
+		return "Hyper-V"
+	case "xen":
+		return "Xen"
+	}
+
+	// Prefer an identified guest over the generic x86 hypervisor flag.
+	if guest != "" && !isContainerVirtualization(guest) {
+		return guest
+	}
+	for line := range strings.SplitSeq(readTrimmedFile(proc, "cpuinfo"), "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(key) {
+		case "model name":
+			if model := detectVirtualMachine("", strings.TrimSpace(value), ""); model != "" {
+				return model
+			}
+		case "flags":
+			for _, flag := range strings.Fields(value) {
+				if flag == "hypervisor" {
+					detected = "Virtual Machine"
+					break
+				}
+			}
+		}
+	}
+	return detected
+}
+
+func detectLinuxContainer(root, proc fs.FS) string {
+	var genericContainer string
+	if container := virtualizationName(readTrimmedFile(root, "run/systemd/container")); isContainerVirtualization(container) {
+		if container == "Container" {
+			genericContainer = container
+		} else {
+			return container
+		}
+	}
+	if _, err := fs.Stat(root, "run/.containerenv"); err == nil {
+		return "Podman"
+	}
+	if _, err := fs.Stat(root, ".dockerenv"); err == nil {
+		return "Docker"
+	}
+	for entry := range strings.SplitSeq(readTrimmedFile(proc, "1/environ"), "\x00") {
+		if id, ok := strings.CutPrefix(entry, "container="); ok {
+			container := virtualizationName(id)
+			if container == "Container" {
+				genericContainer = container
+			} else if isContainerVirtualization(container) {
+				return container
+			}
+		}
+	}
+	for _, file := range []string{"self/cgroup", "1/cgroup"} {
+		container := detectCgroupContainer(readTrimmedFile(proc, file))
+		if container != "" && container != "Container" {
+			return container
+		}
+		genericContainer = cmp.Or(genericContainer, container)
+	}
+	if genericContainer != "" {
+		return genericContainer
+	}
+	release := strings.ToLower(readTrimmedFile(proc, "sys/kernel/osrelease"))
+	if strings.Contains(release, "-microsoft-standard") || strings.HasSuffix(release, "-microsoft") {
+		return "WSL"
+	}
+	return ""
+}
+
+func isContainerVirtualization(name string) bool {
+	switch name {
+	case "Docker", "Podman", "LXC", "OpenVZ", "WSL", "CRI-O", "Container", "containerd", "systemd-nspawn", "rkt", "proot", "pouch":
+		return true
+	}
+	return false
+}
+
+func detectCgroupContainer(groups string) string {
+	var genericContainer string
+	for line := range strings.SplitSeq(groups, "\n") {
+		fields := strings.SplitN(line, ":", 3)
+		if len(fields) != 3 {
+			continue
+		}
+		parts := strings.Split(fields[2], "/")
+		// Match workload scopes and paths, where the runtime may be nested.
+		for i := len(parts) - 1; i > 0; i-- {
+			segment, parent := parts[i], parts[i-1]
+			switch {
+			case containerScope(segment, "libpod-"):
+				return "Podman"
+			case parent == "docker" && isContainerID(segment), containerScope(segment, "docker-"):
 				return "Docker"
-			}
-			if strings.Contains(string(controlGroup), "lxc") {
+			case containerScope(segment, "cri-containerd-"):
+				return "containerd"
+			case containerScope(segment, "crio-"):
+				return "CRI-O"
+			case parent == "lxc" && segment != "", strings.HasPrefix(segment, "lxc.payload."),
+				strings.HasSuffix(segment, ".scope") && strings.HasPrefix(segment, `machine-lxc\x2d`):
 				return "LXC"
+			case strings.HasSuffix(segment, ".scope") && strings.HasPrefix(segment, `machine-rkt\x2d`):
+				return "rkt"
+			case segment == "kubepods" || segment == "kubepods.slice":
+				genericContainer = "Container"
 			}
 		}
 	}
+	return genericContainer
+}
 
-	// 方法4: Windows 检测
-	if runtime.GOOS == "windows" {
-		// 使用 wmic 检测
-		cmd := exec.Command("wmic", "computersystem", "get", "model")
-		if output, err := cmd.Output(); err == nil {
-			model := string(output)
-			if strings.Contains(model, "VMware") {
-				return "VMware"
-			}
-			if strings.Contains(model, "VirtualBox") {
-				return "VirtualBox"
-			}
-			if strings.Contains(model, "Virtual Machine") {
-				return "Hyper-V"
-			}
+func containerScope(segment, prefix string) bool {
+	id, found := strings.CutPrefix(segment, prefix)
+	if !found {
+		return false
+	}
+	id, found = strings.CutSuffix(id, ".scope")
+	return found && isContainerID(id)
+}
+
+func isContainerID(id string) bool {
+	return (len(id) == 12 || len(id) == 64) && strings.Trim(id, "0123456789abcdef") == ""
+}
+
+func windowsVirtualizationDMI(registry string) (vendor, product, firmware string) {
+	for line := range strings.SplitSeq(registry, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 || fields[1] != "REG_SZ" {
+			continue
+		}
+		value := strings.Join(fields[2:], " ")
+		switch fields[0] {
+		case "SystemManufacturer":
+			vendor = value
+		case "SystemProductName":
+			product = value
+		case "BIOSVendor":
+			firmware = value
 		}
 	}
+	return vendor, product, firmware
+}
 
+func detectVirtualMachine(vendor, product, firmware string) string {
+	identifiers := strings.ToLower(vendor + "\n" + product + "\n" + firmware)
+	switch {
+	case strings.Contains(identifiers, "virtualbox"), strings.Contains(identifiers, "innotek"):
+		return "VirtualBox"
+	case strings.Contains(identifiers, "vmware"):
+		return "VMware"
+	case strings.Contains(identifiers, "parallels"):
+		return "Parallels"
+	case strings.EqualFold(vendor, "Microsoft Corporation") && strings.EqualFold(product, "Virtual Machine"):
+		return "Hyper-V"
+	case strings.EqualFold(vendor, "Amazon EC2") && product != "" && !strings.Contains(strings.ToLower(product), ".metal"):
+		return "Amazon EC2"
+	case strings.Contains(identifiers, "domu"), strings.EqualFold(vendor, "Xen"), strings.EqualFold(product, "Xen"):
+		return "Xen"
+	case strings.Contains(identifiers, "bhyve"):
+		return "bhyve"
+	case strings.HasPrefix(strings.ToLower(product), "virtualmac"),
+		strings.EqualFold(product, "Apple Virtualization Generic Platform"):
+		return "Apple Virtualization"
+	case strings.Contains(identifiers, "kvm"):
+		return "KVM"
+	case strings.Contains(identifiers, "qemu"):
+		return "QEMU"
+	}
+	return ""
+}
+
+func virtualizationName(id string) string {
+	switch strings.ToLower(strings.TrimSpace(id)) {
+	case "kvm":
+		return "KVM"
+	case "qemu":
+		return "QEMU"
+	case "vmware":
+		return "VMware"
+	case "vmware-esxi":
+		return "VMware ESXi"
+	case "microsoft", "hyperv", "hyper-v":
+		return "Hyper-V"
+	case "oracle", "vbox", "virtualbox":
+		return "VirtualBox"
+	case "amazon":
+		return "Amazon EC2"
+	case "google":
+		return "Google Compute Engine"
+	case "xen":
+		return "Xen"
+	case "parallels":
+		return "Parallels"
+	case "apple":
+		return "Apple Virtualization"
+	case "powervm":
+		return "PowerVM"
+	case "zvm", "z/vm":
+		return "z/VM"
+	case "docker":
+		return "Docker"
+	case "podman":
+		return "Podman"
+	case "lxc", "lxc-libvirt":
+		return "LXC"
+	case "openvz":
+		return "OpenVZ"
+	case "wsl":
+		return "WSL"
+	case "crio", "cri-o":
+		return "CRI-O"
+	case "linux-vserver":
+		return "VServer"
+	case "jail":
+		return "FreeBSD Jail"
+	case "vm-other", "guest", "generic":
+		return "Virtual Machine"
+	case "container-other":
+		return "Container"
+	case "bhyve", "systemd-nspawn", "containerd", "rkt", "proot", "pouch", "bochs", "uml", "qnx", "acrn", "sre", "zone":
+		return strings.ToLower(strings.TrimSpace(id))
+	}
 	return ""
 }
